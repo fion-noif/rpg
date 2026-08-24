@@ -40,7 +40,26 @@ history of this README.
    and retry until the server confirms, so flaky track Wi-Fi doesn't lose
    entries. UI is English/Spanish (toggle, persisted per worker).
 4. **Export** submitted usage as CSV (M1 escape hatch until M2's
-   Approve & Post): `$APP_BASE_URL/api/admin/export?secret=$ADMIN_SECRET`.
+   Approve & Post): `curl "$APP_BASE_URL/api/admin/export?secret=$ADMIN_SECRET"`.
+
+## Manager (admin) access
+
+Browsers sign in at **`/admin/login`** with `ADMIN_SECRET` as the password. That sets
+a signed, httpOnly session cookie (`rw_admin`) good for 12 hours; from there
+`/admin` and `/admin/usage` work without a secret in the URL. Sign out with the
+button on `/admin`.
+
+- Generate the secret with `openssl rand -base64 24` and put it in `.env`.
+- **`?secret=` is for scripts only**, and only on `/api/admin/*` (`export`, `sync`).
+  Admin *pages* ignore it — a secret in a page URL leaks into browser history,
+  bookmarks, and `Referer` headers. An old bookmarked `/admin/login?secret=…`
+  redeems itself for a cookie once, then you should drop the secret from the URL.
+- **Rotating `ADMIN_SECRET` signs out every open session.** Sessions are stateless
+  (nothing in the database), so changing the secret is the only revocation lever.
+- If `ADMIN_SECRET` is unset, `/admin/login` says so and every admin endpoint
+  returns 403 "not configured" rather than a 500.
+- Failed logins are throttled to 10 per 10 minutes per client IP. That counter is
+  per-process and best-effort — secret entropy is the real defense.
 
 ## QuickBooks utilities
 
@@ -52,6 +71,10 @@ npm run test-invoice   # M0 spike: create one idempotent draft invoice (run twic
 
 - Worker auth: admin-generated magic links (`/login/<token>`); only a SHA-256
   hash of the token is stored. Session cookie lasts 7 days.
+- Admin auth: password → signed cookie, `src/admin-auth.ts`. There is no
+  `middleware.ts` on purpose (per-route checks are the house style), so
+  `src/admin-auth.test.ts` walks `app/admin/**` and `app/api/admin/**` and fails
+  if any file forgets its guard.
 - Submissions are append-only, keyed by a client-generated UUID — outbox
   retries are idempotent (`duplicate: true` on replay).
 - The database currently contains smoke-test data (event `R7`, customers
