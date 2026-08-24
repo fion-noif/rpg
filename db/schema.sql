@@ -123,3 +123,142 @@ CREATE UNIQUE INDEX IF NOT EXISTS submission_lines_live
 -- Join key for the export and popular-parts queries; was missing.
 CREATE INDEX IF NOT EXISTS submission_lines_submission
   ON submission_lines (submission_id);
+
+-- ---------------------------------------------------------------------------
+-- M2: admin app foundation (design doc §17 review, §21 weekend participation,
+-- §22 ownership, §23 Rules 1/4/5). All statements below are replay-safe.
+-- ---------------------------------------------------------------------------
+
+-- Stable person identity, separate from per-event participation. `workers` remains
+-- "one person's participation + credential for one event"; `staff` is what the admin's
+-- worker picker selects from and where the sticky language default lives (§22: worker
+-- and worker language are racing-app-owned).
+-- Names are deliberately NOT unique: §23 Rule 1 forbids identity-by-name, so two real
+-- people may legitimately share a display name and are told apart only by id.
+CREATE TABLE IF NOT EXISTS staff (
+  id         SERIAL PRIMARY KEY,
+  name       TEXT NOT NULL,
+  language   TEXT NOT NULL DEFAULT 'en' CHECK (language IN ('en', 'es')),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+ALTER TABLE workers ADD COLUMN IF NOT EXISTS staff_id INTEGER REFERENCES staff(id);
+
+-- One-time backfill of pre-M2 worker rows, which have no staff identity at all. Name is
+-- the only signal available for this dead data, so it is used exactly once, here; from
+-- this point on all matching is by staff_id (§23 Rule 1). Both statements are guarded on
+-- `staff_id IS NULL`, so after the SET NOT NULL below they can never match a row again
+-- and every replay is a no-op.
+INSERT INTO staff (name, language)
+SELECT DISTINCT ON (w.name) w.name, w.language
+FROM workers w
+WHERE w.staff_id IS NULL
+ORDER BY w.name, w.id;
+
+UPDATE workers w
+SET staff_id = s.id
+FROM staff s
+WHERE w.staff_id IS NULL AND s.name = w.name;
+
+-- Loud failure if the backfill missed a row rather than a silently half-migrated table.
+ALTER TABLE workers ALTER COLUMN staff_id SET NOT NULL;
+
+-- A person participates in an event at most once. Fails loudly if a pre-M2 event already
+-- has two same-named workers (they collapsed onto one staff row above); pre-check with
+--   SELECT event_id, name FROM workers GROUP BY 1, 2 HAVING count(*) > 1;
+CREATE UNIQUE INDEX IF NOT EXISTS workers_event_staff ON workers (event_id, staff_id);
+
+-- Token lifecycle. Closing an event must *destroy* worker credentials, not merely stop
+-- honouring them (§8 least privilege), so the hash column becomes nullable — the UNIQUE
+-- index permits many NULLs — and revocation is recorded alongside.
+ALTER TABLE workers ALTER COLUMN token_hash DROP NOT NULL;
+ALTER TABLE workers ADD COLUMN IF NOT EXISTS token_revoked_at TIMESTAMPTZ;
+
+-- "Revoked" means deleted, not flagged: a revoked row can never still carry a usable hash.
+DO $$
+BEGIN
+  ALTER TABLE workers ADD CONSTRAINT workers_revoked_has_no_hash
+    CHECK (token_revoked_at IS NULL OR token_hash IS NULL);
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+
+-- Event close is a distinct admin action: stamps closed_at, clears active, and revokes
+-- every worker token for the event in one transaction.
+ALTER TABLE events ADD COLUMN IF NOT EXISTS closed_at TIMESTAMPTZ;
+
+-- The manager is modelled as one synthetic worker per event (token_hash NULL, its own
+-- staff row), created lazily by the admin code. Manager-authored and manager-voided lines
+-- therefore keep submissions.worker_id NOT NULL and leave every existing query and type
+-- unchanged; readers label those rows "Manager" off this flag.
+ALTER TABLE workers ADD COLUMN IF NOT EXISTS is_admin BOOLEAN NOT NULL DEFAULT FALSE;
+
+-- Weekend customer participation (§21, §22): a customer is added to the event before any
+-- worker is assigned or any usage recorded. Also the lock row that serialises a worker's
+-- write against the manager's approval of the same customer.
+CREATE TABLE IF NOT EXISTS event_customers (
+  event_id        INTEGER NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+  customer_qbo_id TEXT NOT NULL REFERENCES customers(qbo_id),
+  added_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (event_id, customer_qbo_id)
+);
+
+-- Backfill participation for pre-M2 events from what implies it: assignments and any tab
+-- already opened. ON CONFLICT DO NOTHING makes replay a no-op.
+INSERT INTO event_customers (event_id, customer_qbo_id)
+SELECT w.event_id, a.customer_qbo_id
+FROM assignments a JOIN workers w ON w.id = a.worker_id
+UNION
+SELECT s.event_id, s.customer_qbo_id FROM submissions s
+ON CONFLICT DO NOTHING;
+
+-- The approved aggregate is persisted, not recomputed (§23 Rule 4): the QBO invoice is
+-- bookkeeper-mutable and worker tabs keep moving, so posting reads only these lines.
+CREATE TABLE IF NOT EXISTS charge_batch_lines (
+  id          SERIAL PRIMARY KEY,
+  batch_id    INTEGER NOT NULL REFERENCES charge_batches(id) ON DELETE CASCADE,
+  item_qbo_id TEXT NOT NULL REFERENCES items(qbo_id),
+  sku         TEXT,
+  item_name   TEXT NOT NULL,
+  unit_price  NUMERIC(12,2),
+  qty         NUMERIC(10,2) NOT NULL CHECK (qty > 0)
+);
+
+CREATE INDEX IF NOT EXISTS charge_batch_lines_batch
+  ON charge_batch_lines (batch_id);
+
+-- One invoice per customer per event (§23 Rule 5). This index is what makes the approve
+-- claim (INSERT ... ON CONFLICT DO NOTHING) the single winner of a double-approve race.
+CREATE UNIQUE INDEX IF NOT EXISTS charge_batches_event_customer
+  ON charge_batches (event_id, customer_qbo_id);
+
+-- Posting attempt bookkeeping: distinguishes "never tried" (safe to un-approve) from
+-- "unknown outcome" (must retry, which re-queries by DocNumber and adopts).
+ALTER TABLE charge_batches ADD COLUMN IF NOT EXISTS post_attempts INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE charge_batches ADD COLUMN IF NOT EXISTS last_attempt_at TIMESTAMPTZ;
+ALTER TABLE charge_batches ADD COLUMN IF NOT EXISTS post_error TEXT;
+-- Invoice created but QBO assigned its own DocNumber (custom transaction numbers raced
+-- off): the id is still stored so it is never orphaned, but idempotency is unverifiable.
+ALTER TABLE charge_batches ADD COLUMN IF NOT EXISTS doc_number_mismatch BOOLEAN NOT NULL DEFAULT FALSE;
+
+-- Which batch a tab was folded into, so a posted submission points at its invoice.
+ALTER TABLE submissions ADD COLUMN IF NOT EXISTS charge_batch_id INTEGER REFERENCES charge_batches(id);
+
+-- §17 "edits logged" / §23 Rule 4: append-only record of everything the manager did.
+CREATE TABLE IF NOT EXISTS admin_actions (
+  id              SERIAL PRIMARY KEY,
+  at              TIMESTAMPTZ NOT NULL DEFAULT now(),
+  action          TEXT NOT NULL, -- edit-qty|void-line|add-line|approve|post|post-failed|unapprove|close-event
+  event_id        INTEGER REFERENCES events(id),
+  customer_qbo_id TEXT REFERENCES customers(qbo_id),
+  batch_id        INTEGER REFERENCES charge_batches(id) ON DELETE SET NULL,
+  detail          JSONB NOT NULL DEFAULT '{}'::jsonb
+);
+
+-- The event code flows into a 21-character QBO DocNumber (RW-{code}-{customerId}) and into
+-- a QBO query literal, so its shape is constrained at the source rather than escaped at
+-- every use site.
+DO $$
+BEGIN
+  ALTER TABLE events ADD CONSTRAINT events_code_format CHECK (code ~ '^[A-Z0-9]{1,8}$');
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;

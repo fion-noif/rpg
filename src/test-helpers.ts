@@ -17,7 +17,8 @@ export async function applySchema(pool: pg.Pool): Promise<void> {
  */
 export async function resetSchema(pool: pg.Pool): Promise<void> {
   await pool.query(
-    `TRUNCATE submissions, assignments, workers, events, customers, items RESTART IDENTITY CASCADE`
+    `TRUNCATE submissions, assignments, workers, staff, events, event_customers,
+              charge_batch_lines, admin_actions, customers, items RESTART IDENTITY CASCADE`
   );
 }
 
@@ -25,12 +26,17 @@ export interface Fixtures {
   eventId: number;
   workerAId: number;
   workerBId: number;
+  staffAId: number;
+  staffBId: number;
   customerId: string;
   itemId: string;
   inactiveItemId: string;
 }
 
-/** One event, two workers both assigned to one customer, one active item, one inactive item. */
+/**
+ * One event with one participating customer, two workers (each with a staff identity) both
+ * assigned to that customer, one active item, one inactive item.
+ */
 export async function seedFixtures(pool: pg.Pool): Promise<Fixtures> {
   const {
     rows: [event],
@@ -56,17 +62,29 @@ export async function seedFixtures(pool: pg.Pool): Promise<Fixtures> {
     [inactiveItemId]
   );
 
+  // The customer participates in the event (design doc §21) — this row must exist before
+  // any assignment or usage, and is the lock row usage/approve serialise on.
+  await pool.query(`INSERT INTO event_customers (event_id, customer_qbo_id) VALUES ($1, $2)`, [
+    event.id,
+    customerId,
+  ]);
+
+  const { rows: staff } = await pool.query<{ id: number }>(
+    `INSERT INTO staff (name) VALUES ('Worker A'), ('Worker B') RETURNING id`
+  );
+  const [staffA, staffB] = staff;
+
   const {
     rows: [workerA],
   } = await pool.query<{ id: number }>(
-    `INSERT INTO workers (event_id, name, token_hash) VALUES ($1, 'Worker A', $2) RETURNING id`,
-    [event.id, hashToken('token-a')]
+    `INSERT INTO workers (event_id, staff_id, name, token_hash) VALUES ($1, $2, 'Worker A', $3) RETURNING id`,
+    [event.id, staffA.id, hashToken('token-a')]
   );
   const {
     rows: [workerB],
   } = await pool.query<{ id: number }>(
-    `INSERT INTO workers (event_id, name, token_hash) VALUES ($1, 'Worker B', $2) RETURNING id`,
-    [event.id, hashToken('token-b')]
+    `INSERT INTO workers (event_id, staff_id, name, token_hash) VALUES ($1, $2, 'Worker B', $3) RETURNING id`,
+    [event.id, staffB.id, hashToken('token-b')]
   );
   await pool.query(`INSERT INTO assignments (worker_id, customer_qbo_id) VALUES ($1, $3), ($2, $3)`, [
     workerA.id,
@@ -78,6 +96,8 @@ export async function seedFixtures(pool: pg.Pool): Promise<Fixtures> {
     eventId: event.id,
     workerAId: workerA.id,
     workerBId: workerB.id,
+    staffAId: staffA.id,
+    staffBId: staffB.id,
     customerId,
     itemId,
     inactiveItemId,

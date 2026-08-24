@@ -5,7 +5,7 @@
 //   npm run rotate -- Mike R7        (disambiguate if the name exists in multiple events)
 import { q, pool } from '../db';
 import { config } from '../config';
-import { hashToken, newToken } from '../workers';
+import { issueToken } from '../workers';
 
 const arg = process.argv[2];
 const eventCode = process.argv[3];
@@ -40,8 +40,8 @@ if (workers.length > 1) {
 }
 
 const worker = workers[0];
-const token = newToken();
-await q('UPDATE workers SET token_hash = $1 WHERE id = $2', [hashToken(token), worker.id]);
+// Shared with the admin app's rotate action; also clears any earlier revocation.
+const token = await issueToken(worker.id);
 
 console.log(`Rotated login link for ${worker.name} (event ${worker.event_code}). Old link is now invalid.`);
 console.log(`${config.appBaseUrl}/login/${token}`);
