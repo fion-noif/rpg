@@ -340,3 +340,81 @@ body {
   color: #a1a1aa;
   padding: 16px 10px;
 }
+
+/* --- Per-customer review (app/admin/events/[eventId]/customers/[customerId]) --- */
+
+.admin-alert {
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  color: #991b1b;
+  border-radius: 10px;
+  padding: 10px 12px;
+  font-size: 14px;
+  margin-bottom: 12px;
+}
+
+.admin-table tfoot th {
+  text-align: left;
+  padding: 10px;
+  border-top: 2px solid #d4d4d8;
+  border-bottom: none;
+  font-size: 13px;
+  text-transform: none;
+  letter-spacing: 0;
+  color: #18181b;
+}
+
+.admin-table tfoot th.num {
+  text-align: right;
+}
+
+.admin-table tr.voided td {
+  color: #a1a1aa;
+  text-decoration: line-through;
+}
+
+.admin-row-actions {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.admin-row-actions .admin-btn {
+  height: 32px;
+  padding: 0 10px;
+  font-size: 13px;
+}
+
+.admin-input.qty {
+  width: 72px;
+  padding: 6px 8px;
+  font-size: 14px;
+}
+
+.admin-card h2 {
+  font-size: 15px;
+  margin: 0 0 4px;
+}
+
+.admin-add-part,
+.admin-audit,
+.admin-placeholder {
+  margin-top: 20px;
+}
+
+.admin-add-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-top: 10px;
+}
+
+.admin-add-row select.admin-input {
+  flex: 1;
+}
+
+.admin-placeholder {
+  border-style: dashed;
+  background: #fafafa;
+}

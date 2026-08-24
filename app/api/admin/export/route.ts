@@ -15,8 +15,12 @@ export async function GET(req: NextRequest) {
   if (denied) return denied;
 
   // voided_at IS NULL: void'd lines were entry mistakes, not usage — keep them out of billing.
+  // Manager adjustments are lines on the event's synthetic admin worker; the `worker` column
+  // reads "Manager" for those. Columns are otherwise unchanged — downstream sheets depend
+  // on this header.
   const rows = await q(
-    `SELECT e.code AS event, c.display_name AS customer, w.name AS worker,
+    `SELECT e.code AS event, c.display_name AS customer,
+            CASE WHEN w.is_admin THEN 'Manager' ELSE w.name END AS worker,
             l.sku, l.item_name, l.qty, l.unit_price, s.status, s.submitted_at, s.id AS submission_id
      FROM submission_lines l
      JOIN submissions s ON s.id = l.submission_id
