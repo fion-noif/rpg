@@ -3,3 +3,4 @@ data/
 .env
 *.log
 .next/
+myevent.json
