@@ -1,0 +1,11 @@
+{
+  "event": {
+    "code": "R7",
+    "name": "2026 US Karting Championship - Round 7"
+  },
+  "workers": [
+    { "name": "Mike", "language": "en", "customers": ["Smith Racing"] },
+    { "name": "Carlos", "language": "es", "customers": ["Garcia Racing"] },
+    { "name": "Alex", "language": "en", "customers": ["Miller Racing", "Chen Racing"] }
+  ]
+}

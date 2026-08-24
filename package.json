@@ -1,0 +1,36 @@
+{
+  "name": "racing-parts-app",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Racing parts cost entry with QuickBooks Online integration",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "db:up": "docker compose up -d db",
+    "db:migrate": "tsx src/scripts/migrate.ts",
+    "seed": "tsx src/scripts/seed.ts",
+    "rotate": "tsx src/scripts/rotate-token.ts",
+    "auth": "tsx src/scripts/auth.ts",
+    "sync": "tsx src/scripts/sync.ts",
+    "test-invoice": "tsx src/scripts/test-invoice.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "DATABASE_URL=\"${TEST_DATABASE_URL:-postgres://racing:racing@localhost:5433/racing_test}\" node --test --import tsx \"src/**/*.test.ts\""
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "next": "^15.4.0",
+    "pg": "^8.13.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.5.0",
+    "@types/pg": "^8.11.10",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0"
+  }
+}

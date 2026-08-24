@@ -1,0 +1,14 @@
+services:
+  db:
+    image: postgres:16-alpine
+    ports:
+      - "5433:5432"
+    environment:
+      POSTGRES_DB: racing
+      POSTGRES_USER: racing
+      POSTGRES_PASSWORD: racing
+    volumes:
+      - racing_pgdata:/var/lib/postgresql/data
+
+volumes:
+  racing_pgdata:

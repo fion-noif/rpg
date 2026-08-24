@@ -1,0 +1,11 @@
+{
+  "event": {
+    "code": "R7",
+    "name": "2026 US Karting Championship - Round 7"
+  },
+  "workers": [
+    { "name": "Mike", "language": "en", "customers": ["Diego Rodriguez"] },
+    { "name": "Carlos", "language": "es", "customers": ["Dylan Sollfrank"] },
+    { "name": "Alex", "language": "en", "customers": ["John Melton", "Kate Whelan"] }
+  ]
+}
