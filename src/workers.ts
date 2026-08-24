@@ -1,5 +1,14 @@
 import { createHash, randomBytes } from 'node:crypto';
-import { q } from './db';
+import { q, pool } from './db';
+
+/**
+ * The subset of `pg.Pool` / `pg.PoolClient` these helpers need. Taking it as a parameter
+ * lets a caller enlist them in an open transaction (closing an event revokes tokens in the
+ * same tx that stamps `closed_at`) without every function growing a second variant.
+ */
+export interface Queryable {
+  query(text: string, params?: unknown[]): Promise<{ rows: any[] }>;
+}
 
 export const SESSION_COOKIE = 'rw_session';
 
@@ -40,9 +49,9 @@ export async function workerByToken(token: string | undefined): Promise<WorkerSe
  * previous revocation. Returns the plaintext, which is the one and only time it exists —
  * losing it means rotating again.
  */
-export async function issueToken(workerId: number): Promise<string> {
+export async function issueToken(workerId: number, client: Queryable = pool): Promise<string> {
   const token = newToken();
-  await q('UPDATE workers SET token_hash = $1, token_revoked_at = NULL WHERE id = $2', [
+  await client.query('UPDATE workers SET token_hash = $1, token_revoked_at = NULL WHERE id = $2', [
     hashToken(token),
     workerId,
   ]);
@@ -55,14 +64,14 @@ export async function issueToken(workerId: number): Promise<string> {
  * revocation stamped. The synthetic admin worker is skipped — it has no token to begin
  * with. Returns the number of credentials destroyed.
  */
-export async function revokeEventTokens(eventId: number): Promise<number> {
-  const rows = await q<{ id: number }>(
+export async function revokeEventTokens(eventId: number, client: Queryable = pool): Promise<number> {
+  const res = await client.query(
     `UPDATE workers SET token_hash = NULL, token_revoked_at = now()
      WHERE event_id = $1 AND NOT is_admin AND token_hash IS NOT NULL
      RETURNING id`,
     [eventId]
   );
-  return rows.length;
+  return res.rows.length;
 }
 
 export interface AssignedCustomer {
