@@ -10,6 +10,10 @@
 // runtime check. `usageForCustomer` merges every assigned worker's tab for the UI's shared
 // running list; the caller marks rows read-only when their workerId doesn't match the
 // current session.
+//
+// Every write also serialises against the manager approving the same customer, by locking
+// the (event, customer) participation row first — see `lockParticipation`.
+import type pg from 'pg';
 import { pool } from './db';
 
 export const MAX_QTY = 999;
@@ -28,6 +32,13 @@ export interface UsageLine {
   qty: number;
   workerId: number;
   workerName: string;
+  /**
+   * True when the line lives on the event's synthetic manager worker (`workers.is_admin`) —
+   * a manager adjustment rather than a worker entry, so callers label it "Manager".
+   * Optional because the worker UI synthesizes not-yet-confirmed lines client-side and has
+   * nothing to put here; every row that came from the database sets it.
+   */
+  isAdmin?: boolean;
   updatedAt: string;
 }
 
@@ -36,7 +47,8 @@ export async function usageForCustomer(eventId: number, customerId: string): Pro
   const res = await pool.query(
     `SELECT l.id, l.item_qbo_id AS "itemId", l.sku, l.item_name AS "itemName",
             l.unit_price::float AS "unitPrice", l.qty::float AS qty,
-            s.worker_id AS "workerId", w.name AS "workerName", l.updated_at AS "updatedAt"
+            s.worker_id AS "workerId", w.name AS "workerName", w.is_admin AS "isAdmin",
+            l.updated_at AS "updatedAt"
      FROM submission_lines l
      JOIN submissions s ON s.id = l.submission_id
      JOIN workers w ON w.id = s.worker_id
@@ -47,7 +59,74 @@ export async function usageForCustomer(eventId: number, customerId: string): Pro
   return res.rows;
 }
 
-export type UsageRejection = 'unknown-item' | 'tab-locked';
+export type UsageRejection = 'unknown-item' | 'tab-locked' | 'not-participating';
+
+export interface TabKey {
+  eventId: number;
+  workerId: number;
+  customerId: string;
+}
+
+/**
+ * Upsert-and-return one running tab for (event, worker, customer) — created lazily on first
+ * write and reused for the rest of the event (design doc §31).
+ *
+ * @internal Shared by the worker path below and the manager path in src/admin-review.ts,
+ * which writes onto the event's synthetic admin worker's tab. Not part of the public API:
+ * callers must already hold the participation lock (see `lockParticipation`).
+ */
+export async function tabFor(
+  client: pg.PoolClient,
+  { eventId, workerId, customerId }: TabKey
+): Promise<{ id: string; status: string }> {
+  const inserted = await client.query(
+    `INSERT INTO submissions (id, event_id, worker_id, customer_qbo_id)
+     VALUES (gen_random_uuid(), $1, $2, $3)
+     ON CONFLICT (event_id, worker_id, customer_qbo_id) DO NOTHING
+     RETURNING id, status`,
+    [eventId, workerId, customerId]
+  );
+  if (inserted.rows[0]) return inserted.rows[0];
+  const existing = await client.query(
+    `SELECT id, status FROM submissions
+     WHERE event_id = $1 AND worker_id = $2 AND customer_qbo_id = $3`,
+    [eventId, workerId, customerId]
+  );
+  return existing.rows[0];
+}
+
+/**
+ * The two guards that must run *before* any tab or line is touched (plan §3, the approve
+ * race). `event_customers` always has a row for a legitimate write, which is why it — and
+ * not the tab, which may not exist yet — is the lock row:
+ *
+ * - `FOR SHARE` serialises this write against approve's `FOR UPDATE` on the same row, while
+ *   letting concurrent workers through. Without it, a worker with *no existing tab* could
+ *   create one and land a line just after approval snapshotted the aggregate.
+ * - The `charge_batches` probe is the actual "is this customer approved?" test. Checking the
+ *   tab's status alone misses the same no-tab-yet case.
+ *
+ * @internal
+ */
+export async function lockParticipation(
+  client: pg.PoolClient,
+  eventId: number,
+  customerId: string
+): Promise<UsageRejection | null> {
+  const participating = await client.query(
+    `SELECT 1 FROM event_customers WHERE event_id = $1 AND customer_qbo_id = $2 FOR SHARE`,
+    [eventId, customerId]
+  );
+  if (participating.rowCount === 0) return 'not-participating';
+
+  const batch = await client.query(
+    `SELECT 1 FROM charge_batches WHERE event_id = $1 AND customer_qbo_id = $2`,
+    [eventId, customerId]
+  );
+  if (batch.rowCount !== 0) return 'tab-locked';
+
+  return null;
+}
 
 export interface SetUsageQtyInput {
   workerId: number;
@@ -77,25 +156,15 @@ export async function setUsageQty(input: SetUsageQtyInput): Promise<SetUsageQtyR
   try {
     await client.query('BEGIN');
 
-    // Upsert this worker's tab for this customer at this event (design doc §31: created
-    // lazily, reused for the rest of the event).
-    const inserted = await client.query(
-      `INSERT INTO submissions (id, event_id, worker_id, customer_qbo_id)
-       VALUES (gen_random_uuid(), $1, $2, $3)
-       ON CONFLICT (event_id, worker_id, customer_qbo_id) DO NOTHING
-       RETURNING id, status`,
-      [eventId, workerId, customerId]
-    );
-    const tabRow =
-      inserted.rows[0] ??
-      (
-        await client.query(
-          `SELECT id, status FROM submissions
-           WHERE event_id = $1 AND worker_id = $2 AND customer_qbo_id = $3`,
-          [eventId, workerId, customerId]
-        )
-      ).rows[0];
-    const tab: { id: string; status: string } = tabRow;
+    // First statements in the transaction, before anything is created: participation lock
+    // then approval check (plan §3).
+    const rejection = await lockParticipation(client, eventId, customerId);
+    if (rejection) {
+      await client.query('ROLLBACK');
+      return { ok: false, reason: rejection };
+    }
+
+    const tab = await tabFor(client, { eventId, workerId, customerId });
 
     if (tab.status !== 'SUBMITTED') {
       await client.query('ROLLBACK');

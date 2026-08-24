@@ -168,6 +168,58 @@ test('writes are rejected once the tab is no longer SUBMITTED', async (t) => {
   assert.equal(lines[0].qty, 1); // unchanged
 });
 
+test('a customer that does not participate in the event is refused', async (t) => {
+  if (!dbAvailable) return t.skip();
+  // A customer that exists in QuickBooks but was never added to this weekend (design doc
+  // §21). There is no participation row to lock, so there is nothing to write against.
+  await pool.query(
+    `INSERT INTO customers (qbo_id, display_name, active, sync_token, raw, synced_at)
+     VALUES ('cust-2', 'Not At This Race', true, '0', '{}'::jsonb, now())`
+  );
+
+  const result = await setUsageQty({
+    workerId: fx.workerAId,
+    eventId: fx.eventId,
+    customerId: 'cust-2',
+    itemId: fx.itemId,
+    qty: 1,
+  });
+  assert.deepEqual(result, { ok: false, reason: 'not-participating' });
+
+  const { rows } = await pool.query('SELECT count(*) FROM submissions');
+  assert.equal(rows[0].count, '0'); // no tab was created on the way to the rejection
+});
+
+test('once the customer has a charge batch, even a worker with no tab is refused', async (t) => {
+  if (!dbAvailable) return t.skip();
+  // The race variant the tab-status check alone misses: worker B has never written for this
+  // customer, so there is no tab to find in a non-SUBMITTED state. The batch row is what
+  // makes "this customer is approved" knowable (plan §3).
+  await pool.query(
+    `INSERT INTO charge_batches (event_id, customer_qbo_id, doc_number) VALUES ($1, $2, 'RW-T1-1')`,
+    [fx.eventId, fx.customerId]
+  );
+
+  const result = await setUsageQty({
+    workerId: fx.workerBId,
+    eventId: fx.eventId,
+    customerId: fx.customerId,
+    itemId: fx.itemId,
+    qty: 1,
+  });
+  assert.deepEqual(result, { ok: false, reason: 'tab-locked' });
+
+  const { rows } = await pool.query('SELECT count(*) FROM submissions');
+  assert.equal(rows[0].count, '0');
+});
+
+test('usageForCustomer flags manager lines so callers can label them', async (t) => {
+  if (!dbAvailable) return t.skip();
+  await setUsageQty({ workerId: fx.workerAId, eventId: fx.eventId, customerId: fx.customerId, itemId: fx.itemId, qty: 2 });
+  const [line] = await usageForCustomer(fx.eventId, fx.customerId);
+  assert.equal(line.isAdmin, false);
+});
+
 test('concurrent first writes to a new tab still produce exactly one tab', async (t) => {
   if (!dbAvailable) return t.skip();
   await Promise.all([

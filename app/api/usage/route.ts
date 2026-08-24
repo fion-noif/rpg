@@ -51,7 +51,9 @@ export async function PUT(req: NextRequest) {
   });
 
   if (!result.ok) {
-    const status = result.reason === 'unknown-item' ? 400 : 409;
+    // not-participating is an authorization-shaped answer (this customer isn't part of the
+    // event), tab-locked is a conflict (approved — the tab is closed to further writes).
+    const status = result.reason === 'unknown-item' ? 400 : result.reason === 'not-participating' ? 403 : 409;
     return NextResponse.json({ error: result.reason }, { status });
   }
   return NextResponse.json({ ok: true, line: result.line });

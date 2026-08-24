@@ -16,6 +16,9 @@ export const strings = {
     removeEntry: 'Remove',
     recordedBy: 'by',
     saveFailed: 'Could not save — please try again',
+    // Shown instead of saveFailed when the write was refused because the manager already
+    // approved this customer: retrying will never help, so say why (plan §8).
+    tabLocked: 'This customer’s parts have been approved — no more changes',
     pending: 'Saving…',
     confirmed: 'Saved',
     offlineNote: 'Saved on this phone — will send when connection returns',
@@ -37,6 +40,7 @@ export const strings = {
     removeEntry: 'Eliminar',
     recordedBy: 'por',
     saveFailed: 'No se pudo guardar — intenta de nuevo',
+    tabLocked: 'Las piezas de este cliente ya fueron aprobadas — no se pueden cambiar',
     pending: 'Guardando…',
     confirmed: 'Guardado',
     offlineNote: 'Guardado en este teléfono — se enviará cuando vuelva la conexión',
