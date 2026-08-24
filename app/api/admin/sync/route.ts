@@ -1,13 +1,13 @@
 // Manual QuickBooks sync trigger (design doc §19: sync is manual-only).
 // curl -X POST "http://localhost:3000/api/admin/sync?secret=..."
+// Accepts the admin cookie or `?secret=` (scripts) — see src/admin-auth.ts.
 import { NextRequest, NextResponse } from 'next/server';
-import { config } from '@/src/config';
+import { requireAdmin } from '@/src/admin-auth';
 import { syncFromQuickBooks } from '@/src/qbo/sync';
 
 export async function POST(req: NextRequest) {
-  if (req.nextUrl.searchParams.get('secret') !== config.adminSecret) {
-    return NextResponse.json({ error: 'forbidden' }, { status: 403 });
-  }
+  const denied = requireAdmin(req);
+  if (denied) return denied;
   try {
     const result = await syncFromQuickBooks();
     return NextResponse.json(result);

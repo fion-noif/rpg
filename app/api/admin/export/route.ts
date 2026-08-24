@@ -1,25 +1,18 @@
 // M1 escape hatch: CSV export of all submitted usage, for manual bookkeeping
-// until M2's Approve & Post exists. Guarded by ADMIN_SECRET.
-import { timingSafeEqual } from 'node:crypto';
+// until M2's Approve & Post exists. Accepts the admin cookie or `?secret=`
+// (scripts) — see src/admin-auth.ts.
 import { NextRequest } from 'next/server';
 import { q } from '@/src/db';
-import { config } from '@/src/config';
+import { requireAdmin } from '@/src/admin-auth';
 
 function csvCell(v: unknown): string {
   const s = v == null ? '' : String(v);
   return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 
-function isAuthorized(provided: string | null): boolean {
-  const expected = Buffer.from(config.adminSecret);
-  const actual = Buffer.from(provided ?? '');
-  return actual.length === expected.length && timingSafeEqual(actual, expected);
-}
-
 export async function GET(req: NextRequest) {
-  if (!isAuthorized(req.nextUrl.searchParams.get('secret'))) {
-    return new Response('forbidden', { status: 403 });
-  }
+  const denied = requireAdmin(req);
+  if (denied) return denied;
 
   // voided_at IS NULL: void'd lines were entry mistakes, not usage — keep them out of billing.
   const rows = await q(

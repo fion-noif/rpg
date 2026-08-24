@@ -20,9 +20,9 @@ export const config = {
   tokenUrl: 'https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer',
   databaseUrl: process.env.DATABASE_URL ?? 'postgres://racing:racing@localhost:5433/racing',
   appBaseUrl: process.env.APP_BASE_URL ?? 'http://localhost:3000',
-  get adminSecret() {
-    return requireEnv('ADMIN_SECRET');
-  },
+  // Null rather than a throw: an unset ADMIN_SECRET should surface as a 403
+  // "not configured" from src/admin-auth.ts, not a 500 stack trace.
+  adminSecret: process.env.ADMIN_SECRET || null,
   get clientId() {
     return requireEnv('QBO_CLIENT_ID');
   },
