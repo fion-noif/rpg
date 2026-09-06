@@ -152,6 +152,76 @@ defense. A failed sign-in never says which half was wrong.
 npm run test-invoice   # M0 spike: create one idempotent draft invoice (run twice to verify)
 ```
 
+## Demo data (sandbox only)
+
+A fresh Intuit sandbox is the **stock landscaping demo company**, which undercuts
+nearly every feature this app has: no SKUs on anything, no bilingual names, no
+categories at all, and most items priced $0.00. Nothing in it exercises §10's
+bilingual naming, §12.2's accent-tolerant search, or the manager's review screen.
+These two scripts replace it with a believable karting dataset.
+
+```sh
+# 1. Catalog: 9 categories, 95 priced bilingual parts with SKUs, 16 customers.
+npm run seed-qbo -- --yes
+
+# 2. Pull it into the app database.
+npm run sync
+
+# 3. A full race weekend: event, 8 workers with magic links, usage,
+#    one customer POSTED and one POST_FAILED. Prints the link table.
+npm run seed-demo
+```
+
+Optional flags on `npm run seed-qbo`:
+
+| flag | what it does |
+|---|---|
+| `--yes` | **required.** Confirms the company name printed just above it. |
+| `--deactivate-demo` | Flags Intuit's 29 stock customers and 18 stock items `Active: false`. |
+| `--purge-invoices` | Deletes every invoice, so a tester's first invoice is their own. |
+| `--purge-stock-txns` | Wider: deletes all of Intuit's stock transactions. Needed because QuickBooks refuses to deactivate a customer that still carries a balance or an unbilled charge. |
+
+`npm run seed-demo -- --reset` rebuilds the demo weekend from scratch. It scrubs
+only that event's rows — never `admins` (the owner account is the only way back
+into the app) and never the synced `customers`/`items`, which are QuickBooks'
+data, not ours (§3).
+
+**The sandbox-only guard.** Both scripts refuse to write unless *all three* hold,
+and each catches a different accident (`src/qbo/catalog.ts`, unit-tested):
+
+1. `QBO_ENVIRONMENT` is exactly `sandbox`. Anything else — including a typo —
+   fails closed. Checked before the first HTTP call.
+2. `companyInfo()` returned a company name. If we cannot identify the target,
+   "unknown" is not a safe default for a bulk write.
+3. `--yes` was passed. `QBO_ENVIRONMENT` is one line in a file; a human is a
+   second, independent signal. The company name is printed first, so the
+   confirmation is informed rather than reflexive.
+
+Everything else is idempotent: parts are matched by `Sku`, customers by
+`DisplayName`, categories by `Name`. Re-running adopts what exists and creates
+nothing. Every flag is a no-op the second time.
+
+**Two things the seeder cannot fix.** QuickBooks structurally refuses to
+deactivate the items `Services` and `Hours` (they are the company's default
+product and default time-activity service) and any customer with a *billable*
+charge it will not let go of. They stay in the picker; the script reports each one
+and why.
+
+**Parts are created `Taxable: false`, on purpose.** The app computes its running
+total and `charge_batch_lines` as `sum(qty * unit_price)` and sends that as the
+invoice `Amount`. QuickBooks applies sales tax *on top*, so a taxable part makes
+the invoice `TotalAmt` disagree with the number the manager approved — and the
+approved number is the amount of record (§23 Rule 4). **Tax is not covered by the
+design doc at all.** Until it is, parts stay non-taxable so the two figures
+reconcile exactly.
+
+> **`APP_BASE_URL` must be reachable from a phone before real user testing.**
+> Worker magic links are minted from `config.appBaseUrl` and baked into the link
+> text. At the default `http://localhost:3000` every link resolves to the
+> tester's *own* device and will not work from a phone in a paddock. Set it to
+> the LAN IP or the deployed host **before** minting links to hand out — links
+> already issued keep the old base and have to be rotated.
+
 ## Notes
 
 - Worker auth: admin-generated magic links (`/login/<token>`); only a SHA-256
