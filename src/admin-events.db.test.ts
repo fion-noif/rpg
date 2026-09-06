@@ -7,7 +7,8 @@ import assert from 'node:assert/strict';
 import { pool } from './db';
 import { workerByToken } from './workers';
 import { setUsageQty } from './usage';
-import { applySchema, resetSchema, seedFixtures, type Fixtures } from './test-helpers';
+import { applySchema, resetSchema, seedAdmin, seedFixtures, type Fixtures } from './test-helpers';
+import type { AdminActor } from './admin/admins';
 import { createStaff, listStaff } from './admin/staff';
 import {
   addCustomer,
@@ -26,6 +27,8 @@ import {
 
 let dbAvailable = true;
 let fx: Fixtures;
+/** Every logged event-setup mutation names its actor now (M3). */
+let admin: AdminActor;
 
 before(async () => {
   try {
@@ -44,6 +47,7 @@ beforeEach(async () => {
   if (!dbAvailable) return;
   await resetSchema(pool);
   fx = await seedFixtures(pool);
+  admin = await seedAdmin(pool, { username: 'mike', name: 'Mike Rolison' });
 });
 
 after(async () => {
@@ -112,8 +116,8 @@ test('createEvent rejects codes the DocNumber budget cannot carry, before touchi
 test('listEvents summarises participation and batch status per event', async (t) => {
   if (!dbAvailable) return t.skip();
   const eventId = await freshEvent();
-  await addCustomer(eventId, fx.customerId);
-  const added = await addWorkerToEvent({ eventId, newStaff: { name: 'Nia' } });
+  await addCustomer(eventId, fx.customerId, admin);
+  const added = await addWorkerToEvent({ eventId, newStaff: { name: 'Nia' } }, admin);
   assert.equal(added.ok, true);
 
   const events = await listEvents();
@@ -134,13 +138,13 @@ test('addCustomer is idempotent, listCustomers shows assigned worker names', asy
   if (!dbAvailable) return t.skip();
   const eventId = await freshEvent();
 
-  assert.deepEqual(await addCustomer(eventId, fx.customerId), { ok: true, added: true });
-  assert.deepEqual(await addCustomer(eventId, fx.customerId), { ok: true, added: false });
-  assert.deepEqual(await addCustomer(eventId, 'no-such-customer'), {
+  assert.deepEqual(await addCustomer(eventId, fx.customerId, admin), { ok: true, added: true });
+  assert.deepEqual(await addCustomer(eventId, fx.customerId, admin), { ok: true, added: false });
+  assert.deepEqual(await addCustomer(eventId, 'no-such-customer', admin), {
     ok: false,
     reason: 'unknown-customer',
   });
-  assert.deepEqual(await addCustomer(999_999, fx.customerId), { ok: false, reason: 'unknown-event' });
+  assert.deepEqual(await addCustomer(999_999, fx.customerId, admin), { ok: false, reason: 'unknown-event' });
 
   let customers = await listCustomers(eventId);
   assert.equal(customers.length, 1);
@@ -148,7 +152,7 @@ test('addCustomer is idempotent, listCustomers shows assigned worker names', asy
   assert.deepEqual(customers[0].workers, []);
   assert.equal(customers[0].batchStatus, null);
 
-  const worker = await addWorkerToEvent({ eventId, newStaff: { name: 'Nia' } });
+  const worker = await addWorkerToEvent({ eventId, newStaff: { name: 'Nia' } }, admin);
   assert.ok(worker.ok);
   await assign(worker.workerId, fx.customerId);
 
@@ -162,19 +166,19 @@ test('addCustomer is idempotent, listCustomers shows assigned worker names', asy
 test('removeCustomer undoes a mis-add but is refused once there is history', async (t) => {
   if (!dbAvailable) return t.skip();
   const eventId = await freshEvent();
-  const worker = await addWorkerToEvent({ eventId, newStaff: { name: 'Nia' } });
+  const worker = await addWorkerToEvent({ eventId, newStaff: { name: 'Nia' } }, admin);
   assert.ok(worker.ok);
   await assign(worker.workerId, fx.customerId);
 
   // Clean removal also drops the assignment, so the worker stops seeing the customer.
-  assert.deepEqual(await removeCustomer(eventId, fx.customerId), { ok: true });
+  assert.deepEqual(await removeCustomer(eventId, fx.customerId, admin), { ok: true });
   assert.deepEqual(await listCustomers(eventId), []);
   const assignments = await pool.query('SELECT count(*) FROM assignments WHERE worker_id = $1', [
     worker.workerId,
   ]);
   assert.equal(assignments.rows[0].count, '0');
 
-  assert.deepEqual(await removeCustomer(eventId, fx.customerId), {
+  assert.deepEqual(await removeCustomer(eventId, fx.customerId, admin), {
     ok: false,
     reason: 'not-participating',
   });
@@ -190,7 +194,7 @@ test('removeCustomer undoes a mis-add but is refused once there is history', asy
   });
   assert.equal(wrote.ok, true);
 
-  assert.deepEqual(await removeCustomer(eventId, fx.customerId), {
+  assert.deepEqual(await removeCustomer(eventId, fx.customerId, admin), {
     ok: false,
     reason: 'has-submissions',
   });
@@ -205,7 +209,7 @@ test('addWorkerToEvent creates the person, returns a working link, and is idempo
   if (!dbAvailable) return t.skip();
   const eventId = await freshEvent();
 
-  const added = await addWorkerToEvent({ eventId, newStaff: { name: 'Nia', language: 'es' } });
+  const added = await addWorkerToEvent({ eventId, newStaff: { name: 'Nia', language: 'es' } }, admin);
   assert.ok(added.ok);
   assert.ok(added.link, 'a brand-new participation must return its one-time link');
   assert.equal(added.name, 'Nia');
@@ -224,7 +228,7 @@ test('addWorkerToEvent creates the person, returns a working link, and is idempo
 
   // Re-adding the same person: same worker row, and no link, because the token is not
   // recoverable from its hash. The UI offers "rotate" instead.
-  const again = await addWorkerToEvent({ eventId, staffId: added.staffId });
+  const again = await addWorkerToEvent({ eventId, staffId: added.staffId }, admin);
   assert.ok(again.ok);
   assert.equal(again.workerId, added.workerId);
   assert.equal(again.link, null);
@@ -244,16 +248,16 @@ test('addWorkerToEvent picks an existing person by id and rejects unknown ids an
 
   const created = await createStaff({ name: 'Existing Person', language: 'es' });
   assert.ok(created.ok);
-  const added = await addWorkerToEvent({ eventId, staffId: created.staffId });
+  const added = await addWorkerToEvent({ eventId, staffId: created.staffId }, admin);
   assert.ok(added.ok);
   assert.equal(added.name, 'Existing Person');
   assert.equal(added.staffId, created.staffId);
 
-  assert.deepEqual(await addWorkerToEvent({ eventId, staffId: 999_999 }), {
+  assert.deepEqual(await addWorkerToEvent({ eventId, staffId: 999_999 }, admin), {
     ok: false,
     reason: 'unknown-staff',
   });
-  assert.deepEqual(await addWorkerToEvent({ eventId, newStaff: { name: '  ' } }), {
+  assert.deepEqual(await addWorkerToEvent({ eventId, newStaff: { name: '  ' } }, admin), {
     ok: false,
     reason: 'invalid-name',
   });
@@ -266,11 +270,11 @@ test('addWorkerToEvent picks an existing person by id and rejects unknown ids an
 test('rotateWorkerToken issues a new link and kills the old one immediately', async (t) => {
   if (!dbAvailable) return t.skip();
   const eventId = await freshEvent();
-  const added = await addWorkerToEvent({ eventId, newStaff: { name: 'Nia' } });
+  const added = await addWorkerToEvent({ eventId, newStaff: { name: 'Nia' } }, admin);
   assert.ok(added.ok && added.link);
   const oldToken = tokenOf(added.link);
 
-  const rotated = await rotateWorkerToken(added.workerId);
+  const rotated = await rotateWorkerToken(added.workerId, admin);
   assert.ok(rotated.ok);
   const newToken = tokenOf(rotated.link);
   assert.notEqual(newToken, oldToken);
@@ -278,22 +282,22 @@ test('rotateWorkerToken issues a new link and kills the old one immediately', as
   assert.equal(await workerByToken(oldToken), undefined);
   assert.equal((await workerByToken(newToken))?.id, added.workerId);
 
-  assert.deepEqual(await rotateWorkerToken(999_999), { ok: false, reason: 'unknown-worker' });
+  assert.deepEqual(await rotateWorkerToken(999_999, admin), { ok: false, reason: 'unknown-worker' });
 });
 
 test('removeWorkerFromEvent undoes a mis-add but never destroys entry history', async (t) => {
   if (!dbAvailable) return t.skip();
   const eventId = await freshEvent();
-  await addCustomer(eventId, fx.customerId);
+  await addCustomer(eventId, fx.customerId, admin);
 
-  const mistake = await addWorkerToEvent({ eventId, newStaff: { name: 'Wrong Person' } });
+  const mistake = await addWorkerToEvent({ eventId, newStaff: { name: 'Wrong Person' } }, admin);
   assert.ok(mistake.ok && mistake.link);
   await assign(mistake.workerId, fx.customerId);
-  assert.deepEqual(await removeWorkerFromEvent(mistake.workerId), { ok: true });
+  assert.deepEqual(await removeWorkerFromEvent(mistake.workerId, admin), { ok: true });
   assert.equal(await workerByToken(tokenOf(mistake.link)), undefined);
   assert.equal((await listWorkers(eventId)).length, 0);
 
-  const real = await addWorkerToEvent({ eventId, newStaff: { name: 'Nia' } });
+  const real = await addWorkerToEvent({ eventId, newStaff: { name: 'Nia' } }, admin);
   assert.ok(real.ok);
   await assign(real.workerId, fx.customerId);
   await setUsageQty({
@@ -303,13 +307,13 @@ test('removeWorkerFromEvent undoes a mis-add but never destroys entry history', 
     itemId: fx.itemId,
     qty: 1,
   });
-  assert.deepEqual(await removeWorkerFromEvent(real.workerId), {
+  assert.deepEqual(await removeWorkerFromEvent(real.workerId, admin), {
     ok: false,
     reason: 'has-submissions',
   });
   assert.equal((await listWorkers(eventId)).length, 1);
 
-  assert.deepEqual(await removeWorkerFromEvent(999_999), { ok: false, reason: 'unknown-worker' });
+  assert.deepEqual(await removeWorkerFromEvent(999_999, admin), { ok: false, reason: 'unknown-worker' });
 });
 
 // ---------------------------------------------------------------------------
@@ -319,7 +323,7 @@ test('removeWorkerFromEvent undoes a mis-add but never destroys entry history', 
 test('assign creates the participation row in the same transaction (§21)', async (t) => {
   if (!dbAvailable) return t.skip();
   const eventId = await freshEvent();
-  const worker = await addWorkerToEvent({ eventId, newStaff: { name: 'Nia' } });
+  const worker = await addWorkerToEvent({ eventId, newStaff: { name: 'Nia' } }, admin);
   assert.ok(worker.ok);
 
   // No addCustomer call — assigning implies participation.
@@ -354,13 +358,13 @@ test('assign creates the participation row in the same transaction (§21)', asyn
 test('closeEvent refuses while customers are unposted, then force closes and destroys links', async (t) => {
   if (!dbAvailable) return t.skip();
   const eventId = await freshEvent();
-  await addCustomer(eventId, fx.customerId);
-  const worker = await addWorkerToEvent({ eventId, newStaff: { name: 'Nia' } });
+  await addCustomer(eventId, fx.customerId, admin);
+  const worker = await addWorkerToEvent({ eventId, newStaff: { name: 'Nia' } }, admin);
   assert.ok(worker.ok && worker.link);
   const token = tokenOf(worker.link);
   assert.ok(await workerByToken(token));
 
-  const refused = await closeEvent(eventId);
+  const refused = await closeEvent(eventId, admin);
   assert.equal(refused.ok, false);
   assert.ok(!refused.ok && refused.reason === 'unposted-customers');
   if (!refused.ok && refused.reason === 'unposted-customers') {
@@ -374,7 +378,7 @@ test('closeEvent refuses while customers are unposted, then force closes and des
   assert.equal(stillOpen.rows[0].closed_at, null);
   assert.ok(await workerByToken(token));
 
-  const forced = await closeEvent(eventId, { force: true });
+  const forced = await closeEvent(eventId, admin, { force: true });
   assert.deepEqual(forced, { ok: true, tokensRevoked: 1 });
 
   const closed = await pool.query('SELECT active, closed_at FROM events WHERE id = $1', [eventId]);
@@ -398,14 +402,14 @@ test('closeEvent refuses while customers are unposted, then force closes and des
   assert.equal(logged.rows[0].detail.tokensRevoked, 1);
   assert.equal(logged.rows[0].detail.unposted.length, 1);
 
-  assert.deepEqual(await closeEvent(eventId), { ok: false, reason: 'already-closed' });
-  assert.deepEqual(await closeEvent(999_999), { ok: false, reason: 'unknown-event' });
+  assert.deepEqual(await closeEvent(eventId, admin), { ok: false, reason: 'already-closed' });
+  assert.deepEqual(await closeEvent(999_999, admin), { ok: false, reason: 'unknown-event' });
 });
 
 test('closeEvent needs no override once every participating customer is POSTED', async (t) => {
   if (!dbAvailable) return t.skip();
   const eventId = await freshEvent();
-  await addCustomer(eventId, fx.customerId);
+  await addCustomer(eventId, fx.customerId, admin);
 
   await pool.query(
     `INSERT INTO charge_batches (event_id, customer_qbo_id, doc_number, status, posted_at)
@@ -413,25 +417,25 @@ test('closeEvent needs no override once every participating customer is POSTED',
     [eventId, fx.customerId, `RW-R8-${fx.customerId}`]
   );
 
-  assert.deepEqual(await closeEvent(eventId), { ok: true, tokensRevoked: 0 });
+  assert.deepEqual(await closeEvent(eventId, admin), { ok: true, tokensRevoked: 0 });
 });
 
 test('a closed event refuses every further mutation', async (t) => {
   if (!dbAvailable) return t.skip();
   const eventId = await freshEvent();
-  const worker = await addWorkerToEvent({ eventId, newStaff: { name: 'Nia' } });
+  const worker = await addWorkerToEvent({ eventId, newStaff: { name: 'Nia' } }, admin);
   assert.ok(worker.ok);
   await assign(worker.workerId, fx.customerId);
-  assert.equal((await closeEvent(eventId, { force: true })).ok, true);
+  assert.equal((await closeEvent(eventId, admin, { force: true })).ok, true);
 
-  assert.deepEqual(await addCustomer(eventId, fx.customerId), { ok: false, reason: 'event-closed' });
-  assert.deepEqual(await removeCustomer(eventId, fx.customerId), { ok: false, reason: 'event-closed' });
-  assert.deepEqual(await addWorkerToEvent({ eventId, newStaff: { name: 'Late' } }), {
+  assert.deepEqual(await addCustomer(eventId, fx.customerId, admin), { ok: false, reason: 'event-closed' });
+  assert.deepEqual(await removeCustomer(eventId, fx.customerId, admin), { ok: false, reason: 'event-closed' });
+  assert.deepEqual(await addWorkerToEvent({ eventId, newStaff: { name: 'Late' } }, admin), {
     ok: false,
     reason: 'event-closed',
   });
-  assert.deepEqual(await rotateWorkerToken(worker.workerId), { ok: false, reason: 'event-closed' });
-  assert.deepEqual(await removeWorkerFromEvent(worker.workerId), { ok: false, reason: 'event-closed' });
+  assert.deepEqual(await rotateWorkerToken(worker.workerId, admin), { ok: false, reason: 'event-closed' });
+  assert.deepEqual(await removeWorkerFromEvent(worker.workerId, admin), { ok: false, reason: 'event-closed' });
   assert.deepEqual(await assign(worker.workerId, fx.customerId), { ok: false, reason: 'event-closed' });
   assert.deepEqual(await unassign(worker.workerId, fx.customerId), { ok: false, reason: 'event-closed' });
 });
@@ -443,7 +447,7 @@ test('a closed event refuses every further mutation', async (t) => {
 test('listStaff carries the last event worked, and never offers the synthetic manager', async (t) => {
   if (!dbAvailable) return t.skip();
   const eventId = await freshEvent();
-  const added = await addWorkerToEvent({ eventId, newStaff: { name: 'Nia' } });
+  const added = await addWorkerToEvent({ eventId, newStaff: { name: 'Nia' } }, admin);
   assert.ok(added.ok);
 
   // The manager is modelled as an is_admin worker with its own staff row (db/schema.sql).

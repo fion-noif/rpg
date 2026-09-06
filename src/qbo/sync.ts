@@ -2,6 +2,7 @@
 // invoked from the CLI (`npm run sync`) or the admin HTTP endpoint — never on a schedule.
 import { q, pool } from '../db';
 import { queryAll, companyInfo } from './client';
+import { clearPreferencesCache } from './invoice';
 
 export interface SyncResult {
   company: string;
@@ -10,6 +11,10 @@ export interface SyncResult {
 }
 
 export async function syncFromQuickBooks(): Promise<SyncResult> {
+  // A sync is the manager saying "I changed things in QuickBooks", which is exactly when a
+  // cached preference check (src/qbo/invoice.ts) may have gone stale.
+  clearPreferencesCache();
+
   const company = await companyInfo();
 
   // Include inactive records so status changes are visible (design doc §23 Rule 3).

@@ -150,6 +150,11 @@ body {
   flex-shrink: 0;
 }
 
+.add-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
 .usage-row {
   display: flex;
   align-items: center;
@@ -202,6 +207,12 @@ body {
 .status-note.error {
   background: #fee2e2;
   color: #991b1b;
+}
+
+/* Approved-and-closed, not broken: informational blue rather than error red. */
+.status-note.locked {
+  background: #dbeafe;
+  color: #1e40af;
 }
 
 .empty {
@@ -341,6 +352,173 @@ body {
   padding: 16px 10px;
 }
 
+/* --- BEGIN: event setup (m2/event-setup) -------------------------------------
+   Additions for /admin (events list + create form) and /admin/events/[id].
+   Kept as one appended block so it merges cleanly alongside other admin work. */
+
+.admin-h2 {
+  font-size: 15px;
+  font-weight: 600;
+  margin: 28px 0 8px;
+  color: #3f3f46;
+}
+
+.admin-muted {
+  color: #a1a1aa;
+}
+
+.admin-inline {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.admin-inline form {
+  margin: 0;
+}
+
+.admin-grow {
+  flex: 1 1 200px;
+}
+
+.admin-addrow {
+  margin-top: 12px;
+}
+
+.admin-note.inline {
+  margin: 0;
+  align-self: center;
+}
+
+.admin-input.narrow {
+  width: 110px;
+}
+
+.admin-input.small {
+  height: 32px;
+  padding: 0 8px;
+  font-size: 13px;
+  width: auto;
+}
+
+.admin-input.mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.admin-btn.small {
+  height: 30px;
+  padding: 0 10px;
+  font-size: 13px;
+}
+
+.admin-btn.danger {
+  background: #b91c1c;
+}
+
+.admin-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.admin-badge {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  vertical-align: middle;
+  margin-left: 6px;
+}
+
+.admin-badge.open {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.admin-badge.closed {
+  background: #f4f4f5;
+  color: #52525b;
+}
+
+/* Assigned-customer chips, each with its own tiny unassign form. */
+.admin-chips {
+  list-style: none;
+  margin: 0 0 6px;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.admin-chips li {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: #f4f4f5;
+  border-radius: 999px;
+  padding: 2px 4px 2px 10px;
+  font-size: 13px;
+}
+
+.admin-chips li.admin-muted {
+  background: none;
+  padding: 2px 0;
+}
+
+.admin-chip-x {
+  border: none;
+  background: none;
+  cursor: pointer;
+  color: #71717a;
+  font-size: 15px;
+  line-height: 1;
+  padding: 0 4px;
+}
+
+.admin-chip-x:hover {
+  color: #b91c1c;
+}
+
+.admin-confirm {
+  display: block;
+  font-size: 13px;
+  color: #52525b;
+  margin: 8px 0;
+}
+
+/* One-time magic-link display. Deliberately loud: it cannot be recovered. */
+.admin-linkbox {
+  border: 1px solid #86efac;
+  background: #f0fdf4;
+  border-radius: 10px;
+  padding: 10px 12px;
+  margin-top: 8px;
+  max-width: 520px;
+}
+
+.admin-linkbox-title {
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #166534;
+  margin-bottom: 6px;
+}
+
+.admin-linkbox .admin-input {
+  font-size: 13px;
+  padding: 8px 10px;
+}
+
+.admin-linkbox .admin-note {
+  margin: 6px 0 0;
+}
+
+/* --- END: event setup (m2/event-setup) ------------------------------------- */
+
 /* --- Per-customer review (app/admin/events/[eventId]/customers/[customerId]) --- */
 
 .admin-alert {
@@ -399,8 +577,37 @@ body {
 
 .admin-add-part,
 .admin-audit,
+.admin-post,
 .admin-placeholder {
   margin-top: 20px;
+}
+
+/* Approve & Post panel: a state readout plus the one or two actions it allows. */
+.admin-post .admin-table {
+  margin: 10px 0;
+}
+
+.admin-post .admin-table th {
+  width: 180px;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.admin-post td.mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+/* QuickBooks Fault text, shown verbatim — pre-wrap so a long Detail stays readable. */
+.admin-pre {
+  margin: 4px 0 10px;
+  padding: 8px 10px;
+  background: #fafafa;
+  border: 1px solid #e2e2e2;
+  border-radius: 4px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 .admin-add-row {

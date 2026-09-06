@@ -1,9 +1,10 @@
 // M1 escape hatch: CSV export of all submitted usage, for manual bookkeeping
-// until M2's Approve & Post exists. Accepts the admin cookie or `?secret=`
-// (scripts) — see src/admin-auth.ts.
+// until M2's Approve & Post exists. One of the two endpoints that still accept the admin
+// cookie *or* `?secret=` (see src/admin-session.ts): it is a read, so an anonymous
+// bookkeeping script is a legitimate caller.
 import { NextRequest } from 'next/server';
 import { q } from '@/src/db';
-import { requireAdmin } from '@/src/admin-auth';
+import { requireAdmin } from '@/src/admin-session';
 
 function csvCell(v: unknown): string {
   const s = v == null ? '' : String(v);
@@ -11,16 +12,16 @@ function csvCell(v: unknown): string {
 }
 
 export async function GET(req: NextRequest) {
-  const denied = requireAdmin(req);
+  const denied = await requireAdmin(req);
   if (denied) return denied;
 
   // voided_at IS NULL: void'd lines were entry mistakes, not usage — keep them out of billing.
-  // Manager adjustments are lines on the event's synthetic admin worker; the `worker` column
-  // reads "Manager" for those. Columns are otherwise unchanged — downstream sheets depend
-  // on this header.
+  // `w.name` unconditionally now (M3): a manager adjustment carries the admin's real name,
+  // because their staff row is named after their account. Pre-M3 rows still read 'Manager',
+  // which is the honest answer for a line the shared password recorded. Columns are unchanged
+  // — downstream sheets depend on this header.
   const rows = await q(
-    `SELECT e.code AS event, c.display_name AS customer,
-            CASE WHEN w.is_admin THEN 'Manager' ELSE w.name END AS worker,
+    `SELECT e.code AS event, c.display_name AS customer, w.name AS worker,
             l.sku, l.item_name, l.qty, l.unit_price, s.status, s.submitted_at, s.id AS submission_id
      FROM submission_lines l
      JOIN submissions s ON s.id = l.submission_id

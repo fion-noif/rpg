@@ -14,6 +14,7 @@ import { pool } from '../db';
 import { hashToken, newToken, issueToken, revokeEventTokens } from '../workers';
 import { config } from '../config';
 import { normalizeLanguage, normalizeName } from './staff';
+import type { AdminActor } from './admins';
 
 /**
  * The event code flows into a 21-char QBO DocNumber and into a QBO query literal, so its
@@ -45,6 +46,8 @@ async function withTx<T extends { ok: boolean }>(fn: (client: pg.PoolClient) => 
 
 interface ActionLog {
   action: string;
+  /** Who did it (M3, §23 Rule 4). Every caller of a logging mutation now takes a session. */
+  admin: AdminActor;
   eventId?: number | null;
   customerQboId?: string | null;
   batchId?: number | null;
@@ -53,14 +56,17 @@ interface ActionLog {
 
 async function logAction(client: pg.PoolClient, entry: ActionLog): Promise<void> {
   await client.query(
-    `INSERT INTO admin_actions (action, event_id, customer_qbo_id, batch_id, detail)
-     VALUES ($1, $2, $3, $4, $5::jsonb)`,
+    `INSERT INTO admin_actions (action, event_id, customer_qbo_id, batch_id, admin_id, detail)
+     VALUES ($1, $2, $3, $4, $5, $6::jsonb)`,
     [
       entry.action,
       entry.eventId ?? null,
       entry.customerQboId ?? null,
       entry.batchId ?? null,
-      JSON.stringify(entry.detail ?? {}),
+      entry.admin.id,
+      // The name is denormalised into the detail as well as joinable via admin_id: a rename
+      // must not silently rewrite what an old audit row says happened at the time.
+      JSON.stringify({ ...(entry.detail ?? {}), by: entry.admin.name }),
     ]
   );
 }
@@ -220,7 +226,11 @@ export type AddCustomerResult =
   | { ok: true; added: boolean }
   | { ok: false; reason: 'unknown-event' | 'event-closed' | 'unknown-customer' };
 
-export async function addCustomer(eventId: number, customerQboId: string): Promise<AddCustomerResult> {
+export async function addCustomer(
+  eventId: number,
+  customerQboId: string,
+  admin: AdminActor
+): Promise<AddCustomerResult> {
   return withTx(async (client) => {
     const event = await lockEvent(client, eventId);
     if (!event) return { ok: false as const, reason: 'unknown-event' as const };
@@ -238,7 +248,7 @@ export async function addCustomer(eventId: number, customerQboId: string): Promi
     // an audit row.
     if (ins.rows.length === 0) return { ok: true as const, added: false };
 
-    await logAction(client, { action: 'add-customer', eventId, customerQboId });
+    await logAction(client, { action: 'add-customer', admin, eventId, customerQboId });
     return { ok: true as const, added: true };
   });
 }
@@ -255,7 +265,11 @@ export type RemoveCustomerResult =
  * has been approved there is billing history hanging off the participation row, and dropping
  * it would orphan that history — refused rather than cascaded (§31 append-only).
  */
-export async function removeCustomer(eventId: number, customerQboId: string): Promise<RemoveCustomerResult> {
+export async function removeCustomer(
+  eventId: number,
+  customerQboId: string,
+  admin: AdminActor
+): Promise<RemoveCustomerResult> {
   return withTx(async (client) => {
     const event = await lockEvent(client, eventId);
     if (!event) return { ok: false as const, reason: 'unknown-event' as const };
@@ -291,7 +305,7 @@ export async function removeCustomer(eventId: number, customerQboId: string): Pr
       eventId,
       customerQboId,
     ]);
-    await logAction(client, { action: 'remove-customer', eventId, customerQboId });
+    await logAction(client, { action: 'remove-customer', admin, eventId, customerQboId });
     return { ok: true as const };
   });
 }
@@ -359,7 +373,10 @@ export type AddWorkerResult =
  * Idempotent on (event_id, staff_id): a duplicate add returns the existing worker with
  * `link: null` rather than silently rotating the link out from under someone mid-weekend.
  */
-export async function addWorkerToEvent(input: AddWorkerInput): Promise<AddWorkerResult> {
+export async function addWorkerToEvent(
+  input: AddWorkerInput,
+  admin: AdminActor
+): Promise<AddWorkerResult> {
   return withTx(async (client) => {
     const event = await lockEvent(client, input.eventId);
     if (!event) return { ok: false as const, reason: 'unknown-event' as const };
@@ -408,6 +425,7 @@ export async function addWorkerToEvent(input: AddWorkerInput): Promise<AddWorker
 
     await logAction(client, {
       action: 'add-worker',
+      admin,
       eventId: input.eventId,
       detail: { workerId: inserted.rows[0].id, staffId, name: inserted.rows[0].name },
     });
@@ -433,7 +451,10 @@ export type RotateTokenResult =
  * Issues a replacement link and kills the old one (the hash is overwritten, so the previous
  * token stops resolving immediately). Used when a worker loses their link or a phone walks.
  */
-export async function rotateWorkerToken(workerId: number): Promise<RotateTokenResult> {
+export async function rotateWorkerToken(
+  workerId: number,
+  admin: AdminActor
+): Promise<RotateTokenResult> {
   return withTx(async (client) => {
     const res = await client.query<{ closed_at: string | null }>(
       `SELECT e.closed_at FROM workers w JOIN events e ON e.id = w.event_id
@@ -445,7 +466,7 @@ export async function rotateWorkerToken(workerId: number): Promise<RotateTokenRe
     if (res.rows[0].closed_at) return { ok: false as const, reason: 'event-closed' as const };
 
     const token = await issueToken(workerId, client);
-    await logAction(client, { action: 'rotate-token', detail: { workerId } });
+    await logAction(client, { action: 'rotate-token', admin, detail: { workerId } });
     return { ok: true as const, link: loginLink(token) };
   });
 }
@@ -459,7 +480,10 @@ export type RemoveWorkerResult =
  * reference them and §31 forbids destroying entry history. Rotate or close the event to kill
  * their access instead.
  */
-export async function removeWorkerFromEvent(workerId: number): Promise<RemoveWorkerResult> {
+export async function removeWorkerFromEvent(
+  workerId: number,
+  admin: AdminActor
+): Promise<RemoveWorkerResult> {
   return withTx(async (client) => {
     const res = await client.query<{ event_id: number; name: string; closed_at: string | null }>(
       `SELECT w.event_id, w.name, e.closed_at FROM workers w JOIN events e ON e.id = w.event_id
@@ -478,6 +502,7 @@ export async function removeWorkerFromEvent(workerId: number): Promise<RemoveWor
     await client.query('DELETE FROM workers WHERE id = $1', [workerId]);
     await logAction(client, {
       action: 'remove-worker',
+      admin,
       eventId: worker.event_id,
       detail: { workerId, name: worker.name },
     });
@@ -578,6 +603,7 @@ export type CloseEventResult =
  */
 export async function closeEvent(
   eventId: number,
+  admin: AdminActor,
   options: { force?: boolean } = {}
 ): Promise<CloseEventResult> {
   return withTx(async (client) => {
@@ -604,6 +630,7 @@ export async function closeEvent(
     const tokensRevoked = await revokeEventTokens(eventId, client);
     await logAction(client, {
       action: 'close-event',
+      admin,
       eventId,
       detail: {
         forced: options.force === true,

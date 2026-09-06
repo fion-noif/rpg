@@ -929,6 +929,30 @@ After a worker submits usage, the system should preserve:
 -   Approval information
 -   QuickBooks posting result
 
+**"Which manager" (08/24/2026):** the first implementation had one shared
+admin password, so every audit row could only say *a manager* did it. Mike
+owns the team and hires managers, which makes that answer useless. Named
+accounts now:
+
+1.  `admins` — one row per person (username, scrypt password hash, role
+    `owner|manager`, `active`, `token_version`).
+2.  `admin_actions.admin_id` — who took each action. **Nullable, and left
+    that way for pre-existing rows.** Back-attributing history to whoever
+    happens to be owner today would be a fabrication, which is the opposite
+    of what this rule asks for.
+3.  Attribution flows through `staff.admin_id`: each admin owns one `staff`
+    row bearing their real name, and the per-event synthetic
+    `workers.is_admin` row hangs off it. Every reader (worker screens,
+    review page, CSV export) already reads `workers.name`, so nothing
+    downstream changed shape — the name just became real.
+4.  Consequence for the auth model: `?secret=` (a bearer token with no
+    identity) is accepted only on the read-only script endpoints. A mutation
+    with no `who` is not an acceptable audit row, so every mutating admin
+    surface requires a session cookie.
+
+Revisit if a third role ever has a concrete caller; two roles and no
+permission table is deliberate.
+
 ### Rule 5 --- Make posting idempotent
 
 Retrying a failed QuickBooks API call must not accidentally create

@@ -45,6 +45,17 @@ export default async function Page() {
     usageByCustomer[c.qbo_id] = await usageForCustomer(worker.event_id, c.qbo_id);
   }
 
+  // A charge batch existing for (event, customer) is exactly what `setUsageQty` rejects as
+  // 'tab-locked' (src/usage.ts `lockParticipation`), so render those customers read-only
+  // rather than accepting taps that the server will refuse with a 409.
+  const batches = await q<{ customer_qbo_id: string }>(
+    `SELECT customer_qbo_id FROM charge_batches WHERE event_id = $1`,
+    [worker.event_id]
+  );
+  const locked = new Set(batches.map((b) => b.customer_qbo_id));
+  const lockedByCustomer: Record<string, boolean> = {};
+  for (const c of customers) lockedByCustomer[c.qbo_id] = locked.has(c.qbo_id);
+
   return (
     <WorkerApp
       worker={{ id: worker.id, name: worker.name, language: worker.language, eventName: worker.event_name }}
@@ -52,6 +63,7 @@ export default async function Page() {
       catalog={catalog}
       popularIds={popular.map((p) => p.id)}
       usageByCustomer={usageByCustomer}
+      lockedByCustomer={lockedByCustomer}
     />
   );
 }

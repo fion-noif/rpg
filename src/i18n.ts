@@ -15,6 +15,9 @@ export const strings = {
     nothingRecorded: 'Nothing recorded yet',
     removeEntry: 'Remove',
     recordedBy: 'by',
+    // No `manager:` key any more (M3). Attribution for an admin line is the admin's real
+    // name off their staff row, which is data, not a translatable label — a person's name
+    // reads the same in both languages. Pre-M3 rows are literally named 'Manager'.
     saveFailed: 'Could not save — please try again',
     // Shown instead of saveFailed when the write was refused because the manager already
     // approved this customer: retrying will never help, so say why (plan §8).

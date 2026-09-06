@@ -128,6 +128,30 @@ export async function lockParticipation(
   return null;
 }
 
+/**
+ * The approve side of the same lock: `FOR UPDATE` on the participation row, which excludes
+ * every concurrent `FOR SHARE` writer above until this transaction commits.
+ *
+ * A sibling rather than a mode flag on `lockParticipation` because the two callers want
+ * different answers from the second half of that helper: a worker write must stop at
+ * `'tab-locked'` when a batch exists, whereas approve *creates* that batch and detects a
+ * double-approve from its own `ON CONFLICT DO NOTHING` claim instead.
+ *
+ * @returns false when the customer does not participate in the event.
+ * @internal
+ */
+export async function lockParticipationForUpdate(
+  client: pg.PoolClient,
+  eventId: number,
+  customerId: string
+): Promise<boolean> {
+  const res = await client.query(
+    `SELECT 1 FROM event_customers WHERE event_id = $1 AND customer_qbo_id = $2 FOR UPDATE`,
+    [eventId, customerId]
+  );
+  return res.rowCount !== 0;
+}
+
 export interface SetUsageQtyInput {
   workerId: number;
   eventId: number;

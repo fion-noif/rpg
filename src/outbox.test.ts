@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { enqueue, remove, type UsageOp } from './outbox';
+import { classifyWriteFailure, enqueue, remove, type UsageOp } from './outbox';
 
 test('enqueue appends a new op', () => {
   const q = enqueue([], { customerId: 'c1', itemId: 'i1', qty: 1 });
@@ -47,4 +47,32 @@ test('remove drops only the matching (customerId, itemId) pending op', () => {
   q = enqueue(q, { customerId: 'c1', itemId: 'i2', qty: 2 });
   q = remove(q, { customerId: 'c1', itemId: 'i1' });
   assert.deepEqual(q, [{ customerId: 'c1', itemId: 'i2', qty: 2 }]);
+});
+
+// --- classifyWriteFailure: what the flush loop does with a refused op ---
+
+test('a 409 tab-locked is its own outcome, not a generic failure', () => {
+  assert.equal(classifyWriteFailure(409, JSON.stringify({ error: 'tab-locked' })), 'locked');
+});
+
+test('other 4xx refusals are dropped with the generic error', () => {
+  assert.equal(classifyWriteFailure(400, JSON.stringify({ error: 'unknown-item' })), 'dropped');
+  assert.equal(classifyWriteFailure(403, JSON.stringify({ error: 'not-participating' })), 'dropped');
+  assert.equal(classifyWriteFailure(401, JSON.stringify({ error: 'not authenticated' })), 'dropped');
+});
+
+test('a 4xx whose body is not JSON is dropped, not retried forever', () => {
+  assert.equal(classifyWriteFailure(413, '<html>Payload Too Large</html>'), 'dropped');
+  assert.equal(classifyWriteFailure(400, ''), 'dropped');
+});
+
+test('5xx and network-shaped statuses stay queued for retry', () => {
+  assert.equal(classifyWriteFailure(500, 'Internal Server Error'), 'retry');
+  assert.equal(classifyWriteFailure(502, ''), 'retry');
+  assert.equal(classifyWriteFailure(0, ''), 'retry');
+});
+
+test('tab-locked is matched on the error code, not on a substring of the body', () => {
+  assert.equal(classifyWriteFailure(409, JSON.stringify({ error: 'tab-locked-ish' })), 'dropped');
+  assert.equal(classifyWriteFailure(409, JSON.stringify({ detail: 'tab-locked' })), 'dropped');
 });

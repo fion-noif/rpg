@@ -4,3 +4,4 @@ data/
 *.log
 .next/
 myevent.json
+tsconfig.tsbuildinfo

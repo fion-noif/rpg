@@ -20,12 +20,12 @@ export default async function AdminUsagePage() {
   await requireAdminPage();
 
   // voided_at IS NULL: removed entries are entry mistakes, not usage.
-  // Manager adjustments live on the event's synthetic admin worker (`w.is_admin`), so they
-  // are attributed to "Manager" rather than to whatever that row happens to be named.
+  // `w.name` for everyone (M3): a manager adjustment sits on that admin's own worker row,
+  // which is named after their account, so this column names the actual person either way.
   const rows = await q<Row>(
     `SELECT e.code AS event_code, c.display_name AS customer, l.item_name, l.sku,
             SUM(l.qty)::float AS qty,
-            string_agg(DISTINCT CASE WHEN w.is_admin THEN 'Manager' ELSE w.name END, ', ') AS workers,
+            string_agg(DISTINCT w.name, ', ') AS workers,
             MAX(l.updated_at) AS last_updated
      FROM submission_lines l
      JOIN submissions s ON s.id = l.submission_id

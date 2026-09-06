@@ -3,6 +3,60 @@ import { getValidTokens, refreshTokens } from './oauth';
 
 const MINOR_VERSION = '75';
 
+/** The interesting part of a QuickBooks `Fault` payload, when the response carries one. */
+export interface QboFault {
+  code?: string;
+  message?: string;
+  detail?: string;
+}
+
+/**
+ * A non-2xx response from QuickBooks, typed so callers can tell "retry will work" from
+ * "retry is pointless": 5xx/network is transient, 4xx means the request itself is wrong and
+ * needs a human (see src/charges.ts `postBatch`).
+ *
+ * The `message` deliberately keeps the same shape the untyped Error used to have, so log
+ * scraping and existing expectations are unaffected.
+ */
+export class QboError extends Error {
+  readonly status: number;
+  readonly body: string;
+  readonly fault?: QboFault;
+
+  constructor(method: string, path: string, status: number, body: string) {
+    super(`QuickBooks API ${method} ${path} failed: ${status} ${body}`);
+    this.name = 'QboError';
+    this.status = status;
+    this.body = body;
+    this.fault = parseFault(body);
+  }
+}
+
+/**
+ * QuickBooks reports errors as `{Fault: {Error: [{code, Message, Detail}]}}`. Only the first
+ * error is surfaced: the manager needs something actionable, not a list.
+ */
+function parseFault(body: string): QboFault | undefined {
+  try {
+    const first = JSON.parse(body)?.Fault?.Error?.[0];
+    if (!first) return undefined;
+    return { code: first.code, message: first.Message, detail: first.Detail };
+  } catch {
+    return undefined; // HTML error page, empty body, proxy noise — nothing to parse
+  }
+}
+
+/**
+ * Quote a value for use inside a QuickBooks query literal, escaping backslashes and single
+ * quotes the way the QBO query language expects. Interpolating unescaped (the M0 spike in
+ * src/scripts/test-invoice.ts did) lets a stray apostrophe corrupt the query — and a
+ * corrupted `where DocNumber = …` returns nothing, which the posting path reads as
+ * "no invoice exists yet" and duplicates the charge.
+ */
+export function qboLiteral(s: string): string {
+  return `'${s.replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`;
+}
+
 async function qboFetch(path: string, init: { method?: string; body?: unknown } = {}): Promise<any> {
   let tokens = await getValidTokens();
 
@@ -26,7 +80,7 @@ async function qboFetch(path: string, init: { method?: string; body?: unknown } 
     res = await doFetch();
   }
   if (!res.ok) {
-    throw new Error(`QuickBooks API ${init.method ?? 'GET'} ${path} failed: ${res.status} ${await res.text()}`);
+    throw new QboError(init.method ?? 'GET', path, res.status, await res.text());
   }
   return res.json();
 }

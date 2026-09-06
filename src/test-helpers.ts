@@ -6,6 +6,7 @@
 import { readFileSync } from 'node:fs';
 import type pg from 'pg';
 import { hashToken } from './workers';
+import { createAdmin, type AdminRole } from './admin/admins';
 
 export async function applySchema(pool: pg.Pool): Promise<void> {
   await pool.query(readFileSync('db/schema.sql', 'utf8'));
@@ -17,9 +18,39 @@ export async function applySchema(pool: pg.Pool): Promise<void> {
  */
 export async function resetSchema(pool: pg.Pool): Promise<void> {
   await pool.query(
-    `TRUNCATE submissions, assignments, workers, staff, events, event_customers,
+    `TRUNCATE submissions, assignments, workers, staff, admins, events, event_customers,
               charge_batch_lines, admin_actions, customers, items RESTART IDENTITY CASCADE`
   );
+}
+
+/**
+ * A named admin to attribute test writes to. Every admin-side function now requires an actor,
+ * so this is as much a fixture as the event and the customer.
+ *
+ * Uses the real `createAdmin` so the tests exercise the same validation and hashing the app
+ * does; the returned temp password is handed back for the login tests.
+ */
+export async function seedAdmin(
+  pool: pg.Pool,
+  overrides: { username?: string; name?: string; role?: AdminRole } = {}
+): Promise<{ id: number; username: string; name: string; role: AdminRole; password: string }> {
+  const username = overrides.username ?? 'testowner';
+  const result = await createAdmin(
+    {
+      username,
+      name: overrides.name ?? 'Test Owner',
+      role: overrides.role ?? 'owner',
+    },
+    null
+  );
+  if (!result.ok) throw new Error(`seedAdmin failed: ${result.reason}`);
+  return {
+    id: result.id,
+    username: result.username,
+    name: result.name,
+    role: overrides.role ?? 'owner',
+    password: result.tempPassword,
+  };
 }
 
 export interface Fixtures {

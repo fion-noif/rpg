@@ -262,3 +262,49 @@ BEGIN
   ALTER TABLE events ADD CONSTRAINT events_code_format CHECK (code ~ '^[A-Z0-9]{1,8}$');
 EXCEPTION WHEN duplicate_object THEN NULL;
 END $$;
+
+-- ---------------------------------------------------------------------------
+-- M3: named admin accounts (§23 Rule 4 — an audit row has to name a person, not
+-- a role). The single shared admin password could only ever say "a manager did
+-- this"; Mike hires managers, so every one of them signs in as themselves and
+-- every adjustment, approval and post carries their name. All statements below
+-- are replay-safe.
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS admins (
+  id            SERIAL PRIMARY KEY,
+  -- The login handle. Unique, unlike staff.name (§23 Rule 1 forbids identity-by-name
+  -- for *people*; a credential handle is not an identity, it is a lookup key).
+  username      TEXT NOT NULL UNIQUE,
+  -- The real name, and the single source of truth for it: the admin's staff row and
+  -- per-event worker rows are updated from here, never edited independently.
+  name          TEXT NOT NULL,
+  -- `scrypt$<saltHex>$<hashHex>` (src/admin-password.ts). The scheme and salt travel
+  -- with the digest so the parameters can be raised later without a flag day.
+  password_hash TEXT NOT NULL,
+  role          TEXT NOT NULL CHECK (role IN ('owner', 'manager')),
+  active        BOOLEAN NOT NULL DEFAULT TRUE,
+  -- The revocation lever, and the reason there is still no session table: the cookie
+  -- carries the version it was minted with, so bumping this invalidates one admin's
+  -- outstanding sessions immediately. Password change and deactivation both bump it.
+  -- (Rotating ADMIN_SECRET still invalidates *everyone's*, as before.)
+  token_version INTEGER NOT NULL DEFAULT 1,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Each admin gets exactly one staff row carrying their real name. That is the whole
+-- attribution mechanism: a manager adjustment is still a line on a synthetic
+-- `workers.is_admin` row, so the worker screens, the review page and the CSV export
+-- keep working unchanged — they just read a real name now instead of 'Manager'.
+ALTER TABLE staff ADD COLUMN IF NOT EXISTS admin_id INTEGER REFERENCES admins(id);
+
+-- Partial, because staff rows for real workers have no admin_id and there are many of them.
+CREATE UNIQUE INDEX IF NOT EXISTS staff_admin ON staff (admin_id) WHERE admin_id IS NOT NULL;
+
+-- §23 Rule 4 (audit: who). Nullable on purpose and left that way: pre-M3 rows were
+-- written by the anonymous shared password and script-triggered actions have no person
+-- behind them at all. History is not rewritten — an unknown actor stays unknown rather
+-- than being back-attributed to whoever happens to be the owner today.
+ALTER TABLE admin_actions ADD COLUMN IF NOT EXISTS admin_id INTEGER REFERENCES admins(id);
+
+CREATE INDEX IF NOT EXISTS admin_actions_admin ON admin_actions (admin_id, id DESC);

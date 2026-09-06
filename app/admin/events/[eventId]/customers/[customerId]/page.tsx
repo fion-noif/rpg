@@ -7,6 +7,7 @@
 import { notFound } from 'next/navigation';
 import { q } from '@/src/db';
 import { requireAdminPage } from '@/src/admin-page-auth';
+import { batchFor, batchWithLines } from '@/src/charges';
 import CustomerReview, { type CatalogOption, type ReviewLine } from './CustomerReview';
 
 export const dynamic = 'force-dynamic';
@@ -21,14 +22,16 @@ interface LineRow {
   updated_at: string;
   voided_at: string | null;
   worker_name: string;
-  is_admin: boolean;
   voided_by_name: string | null;
-  voided_by_is_admin: boolean | null;
 }
 
-/** "Manager" for the event's synthetic admin worker; the stored name is the fallback. */
-function submitter(name: string | null, isAdmin: boolean | null): string {
-  if (isAdmin) return 'Manager';
+/**
+ * The stored name, always (M3). An admin's worker row is named after their account, so this
+ * reads "Mike Rolison" for a manager adjustment and the worker's name for everything else;
+ * `is_admin` survives only as the flag that styles the row, not as a label substitute.
+ * Pre-M3 admin rows are literally named 'Manager', which is the truthful label for them.
+ */
+function submitter(name: string | null): string {
   return name ?? 'unknown';
 }
 
@@ -61,8 +64,7 @@ export default async function CustomerReviewPage({
   const rows = await q<LineRow>(
     `SELECT l.id, l.item_qbo_id AS item_id, l.sku, l.item_name, l.unit_price::float AS unit_price,
             l.qty::float AS qty, l.updated_at, l.voided_at,
-            w.name AS worker_name, w.is_admin,
-            vb.name AS voided_by_name, vb.is_admin AS voided_by_is_admin
+            w.name AS worker_name, vb.name AS voided_by_name
      FROM submission_lines l
      JOIN submissions s ON s.id = l.submission_id
      JOIN workers w ON w.id = s.worker_id
@@ -81,8 +83,8 @@ export default async function CustomerReviewPage({
     qty: r.qty,
     updatedAt: new Date(r.updated_at).toISOString(),
     voided: r.voided_at != null,
-    submittedBy: submitter(r.worker_name, r.is_admin),
-    voidedBy: r.voided_at ? submitter(r.voided_by_name, r.voided_by_is_admin) : null,
+    submittedBy: submitter(r.worker_name),
+    voidedBy: r.voided_at ? submitter(r.voided_by_name) : null,
   }));
 
   // Same catalogue shape and filter as app/page.tsx: only what QuickBooks still sells is
@@ -94,12 +96,10 @@ export default async function CustomerReviewPage({
      ORDER BY name`
   );
 
-  // Approval closes the customer to any further change, worker or manager (plan §3). The
-  // Approve & Post button itself is a later step; this is only the read-only signal.
-  const [batch] = await q<{ status: string }>(
-    `SELECT status FROM charge_batches WHERE event_id = $1 AND customer_qbo_id = $2`,
-    [eventId, customerId]
-  );
+  // Approval closes the customer to any further change, worker or manager (plan §3), and the
+  // batch row is also the whole state of the Approve & Post panel below.
+  const batch = await batchFor(eventId, customerId);
+  const approved = batch ? await batchWithLines(batch.id) : undefined;
 
   return (
     <div className="admin-wrap">
@@ -121,7 +121,9 @@ export default async function CustomerReviewPage({
         customerId={customerId}
         lines={lines}
         catalog={catalog}
-        batchStatus={batch?.status ?? null}
+        eventClosed={header.closed_at != null}
+        batch={batch ?? null}
+        batchLines={approved?.lines ?? []}
       />
     </div>
   );

@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { strings, type Lang } from '@/src/i18n';
 import { searchCatalog } from '@/src/search';
-import { enqueue, remove, type UsageOp } from '@/src/outbox';
+import { classifyWriteFailure, enqueue, remove, type UsageOp } from '@/src/outbox';
 import type { UsageLine } from '@/src/usage';
 
 export interface CatalogItem {
@@ -42,14 +42,24 @@ function saveQueue(queue: UsageOp[]) {
 // Popular/search rows are for selection only — no quantity shown here. Tapping Add always
 // adds one more to the worker's own line; adjusting or removing an amount happens in the
 // used-parts list below, which is where a quantity is meaningful.
-function PartRow({ item, addLabel, onAdd }: { item: CatalogItem; addLabel: string; onAdd: () => void }) {
+function PartRow({
+  item,
+  addLabel,
+  onAdd,
+  disabled,
+}: {
+  item: CatalogItem;
+  addLabel: string;
+  onAdd: () => void;
+  disabled: boolean;
+}) {
   return (
     <div className="part-row">
       <div className="info">
         <div className="name">{item.name}</div>
         {item.sku && <div className="sku">{item.sku}</div>}
       </div>
-      <button className="add-btn" onClick={onAdd}>
+      <button className="add-btn" onClick={onAdd} disabled={disabled}>
         {addLabel}
       </button>
     </div>
@@ -62,6 +72,12 @@ export default function WorkerApp(props: {
   catalog: CatalogItem[];
   popularIds: string[];
   usageByCustomer: Record<string, UsageLine[]>;
+  /**
+   * Customers the manager has already approved (a `charge_batches` row exists), as of the
+   * server render. Their sections render read-only; the flush loop adds to this set if a
+   * write races an approval that happened after the page loaded.
+   */
+  lockedByCustomer: Record<string, boolean>;
 }) {
   const { customers, catalog, popularIds } = props;
   const [lang, setLang] = useState<Lang>(props.worker.language);
@@ -76,7 +92,12 @@ export default function WorkerApp(props: {
   const [usage, setUsage] = useState<Record<string, UsageLine[]>>(props.usageByCustomer);
   const [queue, setQueue] = useState<UsageOp[]>([]);
   const [saveError, setSaveError] = useState(false);
+  const [lockedIds, setLockedIds] = useState<string[]>(() =>
+    Object.keys(props.lockedByCustomer).filter((id) => props.lockedByCustomer[id])
+  );
   const flushing = useRef(false);
+
+  const locked = customerId !== null && lockedIds.includes(customerId);
 
   const catalogById = useMemo(() => new Map(catalog.map((i) => [i.id, i])), [catalog]);
 
@@ -109,13 +130,22 @@ export default function WorkerApp(props: {
             q = remove(q, op);
             saveQueue(q);
             touched.add(op.customerId);
-          } else if (res.status >= 400 && res.status < 500) {
+          } else {
             // Rejected — do not retry forever; drop and surface it (design doc §31 durability
             // rule cuts the other way here: the worker must know a write did NOT land).
-            console.error('Usage write rejected', await res.text());
+            // `tab-locked` gets its own message: the manager approved this customer, so the
+            // app is working exactly as intended and "try again" would be a lie.
+            const body = await res.text();
+            const outcome = classifyWriteFailure(res.status, body);
+            if (outcome === 'retry') continue;
+            console.error('Usage write rejected', body);
             q = remove(q, op);
             saveQueue(q);
-            setSaveError(true);
+            if (outcome === 'locked') {
+              setLockedIds((ids) => (ids.includes(op.customerId) ? ids : [...ids, op.customerId]));
+            } else {
+              setSaveError(true);
+            }
             touched.add(op.customerId);
           }
         } catch {
@@ -205,7 +235,7 @@ export default function WorkerApp(props: {
   }, [displayLines, props.worker.id]);
 
   function setQty(itemId: string, qty: number) {
-    if (!customer) return;
+    if (!customer || locked) return;
     const op: UsageOp = { customerId: customer.qbo_id, itemId, qty: Math.max(0, qty) };
     const next = enqueue(loadQueue(), op);
     saveQueue(next);
@@ -252,10 +282,11 @@ export default function WorkerApp(props: {
           {t.pending} ({pendingCount}) — {t.offlineNote}
         </div>
       )}
-      {pendingCount === 0 && !saveError && (
+      {pendingCount === 0 && !saveError && !locked && (
         <div className="status-note ok">{t.confirmed} ✓</div>
       )}
       {saveError && <div className="status-note error">{t.saveFailed}</div>}
+      {locked && <div className="status-note locked">{t.tabLocked}</div>}
 
       {customer && (
         <>
@@ -273,12 +304,17 @@ export default function WorkerApp(props: {
                     {line.pending ? ' …' : ''}
                   </div>
                   {!mine && (
+                    // Always the stored name (M3). Admin lines carry the admin's real name
+                    // now, because their staff row is named after their account — so a worker
+                    // sees "by Mike Rolison", not "by Manager". The one exception needs no
+                    // code: pre-M3 rows are literally named 'Manager', which is still the
+                    // truthful label for a line the shared password recorded.
                     <div className="sku">
                       {t.recordedBy} {line.workerName}
                     </div>
                   )}
                 </div>
-                {mine ? (
+                {mine && !locked ? (
                   <div className="qty-controls">
                     <button onClick={() => setQty(line.itemId, line.qty - 1)}>−</button>
                     <span className="qty">{line.qty}</span>
@@ -311,6 +347,7 @@ export default function WorkerApp(props: {
               key={item.id}
               item={item}
               addLabel={t.add}
+              disabled={locked}
               onAdd={() => setQty(item.id, (myQty.get(item.id) ?? 0) + 1)}
             />
           ))}
@@ -323,6 +360,7 @@ export default function WorkerApp(props: {
               key={item.id}
               item={item}
               addLabel={t.add}
+              disabled={locked}
               onAdd={() => setQty(item.id, (myQty.get(item.id) ?? 0) + 1)}
             />
           ))}
