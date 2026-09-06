@@ -19,6 +19,7 @@
 import pg from 'pg';
 import { pool } from './db';
 import { lockParticipation, tabFor, validateQty, type UsageLineWrite } from './usage';
+import { managerSellableItemSql } from './catalog';
 import type { AdminActor } from './admin/admins';
 
 export type AdminRejection =
@@ -222,8 +223,12 @@ async function applyAdminQty(
     if (fromLine && !requireActiveItem) {
       snapshot = { sku: fromLine.sku, item_name: fromLine.item_name, unit_price: fromLine.unit_price };
     } else {
+      // Parts **and** services — the manager's catalogue is deliberately the wider one
+      // (§17, owner's decision 09/06/2026). The narrow predicate is the *worker's*, enforced
+      // in src/usage.ts; widening this one does not widen that one, which is the whole
+      // point of both rules living in src/catalog.ts.
       const item = await client.query<{ sku: string | null; name: string; unit_price: string | null }>(
-        'SELECT sku, name, unit_price FROM items WHERE qbo_id = $1 AND active',
+        `SELECT sku, name, unit_price FROM items WHERE qbo_id = $1 AND ${managerSellableItemSql()}`,
         [itemId]
       );
       if (item.rowCount === 0) {

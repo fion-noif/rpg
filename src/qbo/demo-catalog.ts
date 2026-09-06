@@ -14,6 +14,7 @@
 //    against the real catalog and not just its unit test (§12.2).
 //  - Nothing is priced $0. A $0 part makes the manager's review screen unreadable and hides
 //    exactly the mistake the review exists to catch.
+import { MANAGER_ONLY_CATEGORIES, type ManagerOnlyCategory } from '../catalog';
 
 /** The nine part categories. Order is the order they are created in. */
 export const DEMO_CATEGORIES = [
@@ -159,6 +160,74 @@ export const DEMO_PARTS: DemoPart[] = [
   { sku: 'OTH-LABOR', category: 'Other', en: 'Trackside Labor Hour', es: 'Hora de mano de obra en pista', descEn: 'One hour of trackside mechanic labor', descEs: 'Una hora de mano de obra de mecánico en pista', unitPrice: 95 },
 ];
 
+// ---------------------------------------------------------------------------
+// Manager-only service items (owner's decision, 09/06/2026)
+// ---------------------------------------------------------------------------
+
+/**
+ * The one category that marks an item manager-only. Imported from src/catalog.ts rather
+ * than re-declared: the seeder that *files* items under this category and the queries that
+ * *hide* them by it have to agree on the string, and a copy is how they silently stop
+ * agreeing. See that file for why the name is `Race Services` and not `Services`.
+ */
+export const DEMO_SERVICE_CATEGORY: ManagerOnlyCategory = MANAGER_ONLY_CATEGORIES[0];
+
+/**
+ * A billable service rather than a physical part: team support, a mechanic, an engine lease.
+ * Structurally the same record as a part — SKU, bilingual name, price, category — because it
+ * *is* just a QuickBooks Item; the only real differences are `Type: 'Service'` and that the
+ * price is **per race day**, not per unit.
+ */
+export interface DemoService {
+  sku: string;
+  en: string;
+  es: string;
+  descEn: string;
+  descEs: string;
+  /** Price for **one race day** (owner's decision: services are charged by days). */
+  dayRate: number;
+}
+
+/**
+ * The three services Mike named. Each is billed by the day, and the name says so.
+ *
+ * "(per day)" is in the `Name`, not only the `Description`, on purpose: the name is what
+ * QuickBooks prints on the invoice line and what the manager reads in the review table, so
+ * `Mechanic (per day) × 3` is unambiguous to the customer without anyone having to know the
+ * app's conventions. The bilingual `English - Español` format and the 100-character ceiling
+ * (§10) apply to these exactly as they do to parts — the seeder's pre-flight checks them
+ * with the same `checkBilingualName`.
+ *
+ * Day rates are realistic arrive-and-drive club/regional numbers, with team support the
+ * priciest because it is the whole trackside operation rather than one person or one motor.
+ */
+export const DEMO_SERVICES: DemoService[] = [
+  {
+    sku: 'SVC-TEAM-DAY',
+    en: 'Team Support (per day)',
+    es: 'Apoyo de equipo (por día)',
+    descEn: 'Full trackside team support for one race day: tent, awning, tools, tyre service and data',
+    descEs: 'Apoyo completo de equipo en pista por un día de carrera: carpa, toldo, herramientas, servicio de neumáticos y datos',
+    dayRate: 450,
+  },
+  {
+    sku: 'SVC-MECH-DAY',
+    en: 'Mechanic (per day)',
+    es: 'Mecánico (por día)',
+    descEn: 'One dedicated race mechanic for one race day',
+    descEs: 'Un mecánico de carrera dedicado por un día de carrera',
+    dayRate: 350,
+  },
+  {
+    sku: 'SVC-ENGINE-DAY',
+    en: 'Engine Lease (per day)',
+    es: 'Alquiler de motor (por día)',
+    descEn: 'Race engine lease for one race day, including carburettor and clutch',
+    descEs: 'Alquiler de motor de carrera por un día de carrera, incluye carburador y embrague',
+    dayRate: 300,
+  },
+];
+
 /**
  * The customers. §7 models both organisations and individuals as plain QuickBooks
  * customers, so the demo set is a realistic mix of team accounts and driver/family accounts
@@ -236,9 +305,25 @@ export const STOCK_CUSTOMERS: { id: string; name: string }[] = [
   { id: '29', name: 'Weiskopf Consulting' },
 ];
 
-export const STOCK_ITEMS: { id: string; name: string }[] = [
+/**
+ * The two stock items QuickBooks structurally refuses to deactivate: `Services` is the
+ * company's default sales product and `Hours` its default time-activity service, so a
+ * sparse `Active: false` on either comes back as a fault however many times it is retried.
+ * They therefore stay in the mirror forever, and before this change they leaked onto every
+ * worker's phone as two unpriced, SKU-less taps next to the real parts.
+ *
+ * The seeder re-parents them under `Race Services` instead, which reclassifies them as
+ * manager-only rather than deleting them — the same "flag, never silently recreate or
+ * destroy" posture as §23 Rule 3. If QuickBooks refuses that too, `sku IS NOT NULL` in
+ * `WORKER_VISIBLE_ITEM_SQL` still hides them; see the comment there.
+ */
+export const STOCK_SERVICE_ITEMS: { id: string; name: string }[] = [
   { id: '1', name: 'Services' },
   { id: '2', name: 'Hours' },
+];
+
+export const STOCK_ITEMS: { id: string; name: string }[] = [
+  ...STOCK_SERVICE_ITEMS,
   { id: '3', name: 'Concrete' },
   { id: '4', name: 'Design' },
   { id: '5', name: 'Rock Fountain' },

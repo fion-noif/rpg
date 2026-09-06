@@ -9,7 +9,23 @@ import {
   WRITE_GUARD_MESSAGES,
   type WriteGuardInput,
 } from './catalog';
-import { DEMO_CATEGORIES, DEMO_CUSTOMERS, DEMO_PARTS } from './demo-catalog';
+import {
+  DEMO_CATEGORIES,
+  DEMO_CUSTOMERS,
+  DEMO_PARTS,
+  DEMO_SERVICE_CATEGORY,
+  DEMO_SERVICES,
+  STOCK_ITEMS,
+  STOCK_SERVICE_ITEMS,
+} from './demo-catalog';
+import {
+  isManagerOnlyCategory,
+  isWorkerVisibleItem,
+  managerOnlyItemSql,
+  managerSellableItemSql,
+  MANAGER_ONLY_CATEGORIES,
+  workerVisibleItemSql,
+} from '../catalog';
 import { norm, searchCatalog } from '../search';
 
 // ---------------------------------------------------------------------------
@@ -187,4 +203,207 @@ test('an accent-free query finds the accented part in the real dataset', () => {
   // A bare SKU fragment and a bare part number are both usable searches (§12.3).
   assert.ok(searchCatalog(catalog, 'AX50')!.length >= 4);
   assert.ok(searchCatalog(catalog, '219')!.length >= 4);
+});
+
+// ---------------------------------------------------------------------------
+// The manager-only service items (owner's decision 09/06/2026). These assertions
+// are the ones that fire if somebody adds a service without a day rate in its
+// name, or files it under a category the app does not hide.
+// ---------------------------------------------------------------------------
+
+test('every demo service has a valid SKU, a legal bilingual name, and a non-zero day rate', () => {
+  for (const service of DEMO_SERVICES) {
+    assert.ok(isValidSku(service.sku), `${service.sku}: invalid SKU shape`);
+    const name = checkBilingualName(service.en, service.es);
+    assert.ok(name.ok, `${service.sku}: ${JSON.stringify(name)}`);
+    assert.ok(name.ok && name.name.length <= QBO_NAME_MAX_LENGTH);
+    assert.ok(service.dayRate > 0, `${service.sku}: day rate must be positive`);
+  }
+});
+
+test('service SKUs follow the SVC-*-DAY scheme and are the three Mike named', () => {
+  assert.deepEqual(
+    DEMO_SERVICES.map((s) => s.sku),
+    ['SVC-TEAM-DAY', 'SVC-MECH-DAY', 'SVC-ENGINE-DAY']
+  );
+  // The `-DAY` suffix is the SKU-level statement of the billing unit, so a future service
+  // priced some other way cannot join this list without the mismatch being obvious.
+  for (const service of DEMO_SERVICES) assert.ok(service.sku.endsWith('-DAY'), service.sku);
+});
+
+test('a service name states its unit in both languages, so an invoice line is unambiguous', () => {
+  for (const service of DEMO_SERVICES) {
+    assert.match(service.en, /\(per day\)$/, `${service.sku}: English half must say "(per day)"`);
+    assert.match(service.es, /\(por día\)$/, `${service.sku}: Spanish half must say "(por día)"`);
+    // §10's convention, and what the description is for: the unit spelled out again where a
+    // bookkeeper reads it.
+    assert.match(service.descEn, /race day/, service.sku);
+    assert.match(service.descEs, /día de carrera/, service.sku);
+  }
+});
+
+test('services share the SKU namespace with parts and collide with none of them', () => {
+  const partSkus = new Set(DEMO_PARTS.map((p) => p.sku));
+  for (const service of DEMO_SERVICES) {
+    assert.ok(!partSkus.has(service.sku), `${service.sku} collides with a part`);
+  }
+  assert.equal(new Set(DEMO_SERVICES.map((s) => s.sku)).size, DEMO_SERVICES.length);
+});
+
+test('team support is the priciest service, and every day rate is a plausible one', () => {
+  const rates = new Map(DEMO_SERVICES.map((s) => [s.sku, s.dayRate]));
+  const team = rates.get('SVC-TEAM-DAY')!;
+  for (const [sku, rate] of rates) {
+    if (sku !== 'SVC-TEAM-DAY') assert.ok(rate < team, `${sku} (${rate}) should be under team support`);
+    assert.ok(rate >= 250 && rate <= 500, `${sku}: ${rate} is outside the plausible day-rate band`);
+  }
+});
+
+test('the service category is not named "Services" — QuickBooks Item names are unique', () => {
+  // Verified against the sandbox: creating a Category named `Services` returns fault 6000,
+  // because Intuit's stock demo ships an undeletable Item with that exact name (Id 1).
+  assert.equal(DEMO_SERVICE_CATEGORY, 'Race Services');
+  assert.ok(!(DEMO_CATEGORIES as readonly string[]).includes(DEMO_SERVICE_CATEGORY));
+  assert.ok(!STOCK_ITEMS.some((i) => i.name === DEMO_SERVICE_CATEGORY));
+});
+
+test('the seeder files services under exactly the category the app hides', () => {
+  // The one assertion tying the two halves of the feature together: if these ever disagree,
+  // services get created in QuickBooks and then shown to workers anyway.
+  assert.ok((MANAGER_ONLY_CATEGORIES as readonly string[]).includes(DEMO_SERVICE_CATEGORY));
+});
+
+test('the two undeletable stock service items are the ones marked for re-parenting', () => {
+  assert.deepEqual(STOCK_SERVICE_ITEMS, [
+    { id: '1', name: 'Services' },
+    { id: '2', name: 'Hours' },
+  ]);
+  // They must also stay in the deactivation allow-list: --deactivate-demo tries and reports
+  // the refusal, which is how an operator learns the re-parent is what protects them.
+  for (const item of STOCK_SERVICE_ITEMS) {
+    assert.ok(STOCK_ITEMS.some((s) => s.id === item.id && s.name === item.name), item.name);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// The visibility predicate, and its agreement with the SQL it mirrors. Defined
+// in one place (src/catalog.ts) and reused at four call sites, so this is where
+// the rule itself is pinned down.
+// ---------------------------------------------------------------------------
+
+interface VisibilityCase {
+  label: string;
+  row: { active: boolean; sku: string | null; type: string | null; category: string | null };
+  workerVisible: boolean;
+  managerOnly: boolean;
+}
+
+const VISIBILITY_CASES: VisibilityCase[] = [
+  {
+    label: 'an ordinary racing part',
+    row: { active: true, sku: 'AX50-M', type: 'NonInventory', category: 'Axles' },
+    workerVisible: true,
+    managerOnly: false,
+  },
+  {
+    label: 'a part with no category yet',
+    row: { active: true, sku: 'AX50-M', type: 'NonInventory', category: null },
+    workerVisible: true,
+    managerOnly: false,
+  },
+  {
+    label: 'a manager-only service',
+    row: { active: true, sku: 'SVC-MECH-DAY', type: 'Service', category: 'Race Services' },
+    workerVisible: false,
+    managerOnly: true,
+  },
+  {
+    label: "Intuit's stock Services item: no SKU, no category",
+    row: { active: true, sku: null, type: 'Service', category: null },
+    workerVisible: false,
+    managerOnly: false,
+  },
+  {
+    label: 'the same stock item once re-parented under Race Services',
+    row: { active: true, sku: null, type: 'Service', category: 'Race Services' },
+    workerVisible: false,
+    managerOnly: true,
+  },
+  {
+    label: 'an inactive part',
+    row: { active: false, sku: 'AX50-M', type: 'NonInventory', category: 'Axles' },
+    workerVisible: false,
+    managerOnly: false,
+  },
+  {
+    label: 'an inactive service',
+    row: { active: false, sku: 'SVC-MECH-DAY', type: 'Service', category: 'Race Services' },
+    workerVisible: false,
+    managerOnly: false,
+  },
+  {
+    label: 'a Category folder, which is not sellable at all',
+    row: { active: true, sku: null, type: 'Category', category: null },
+    workerVisible: false,
+    managerOnly: false,
+  },
+];
+
+test('isWorkerVisibleItem hides services, SKU-less stock items, folders and inactive rows', () => {
+  for (const c of VISIBILITY_CASES) {
+    assert.equal(isWorkerVisibleItem(c.row), c.workerVisible, c.label);
+  }
+});
+
+test('isManagerOnlyCategory is exactly the MANAGER_ONLY_CATEGORIES membership test', () => {
+  for (const category of MANAGER_ONLY_CATEGORIES) assert.ok(isManagerOnlyCategory(category));
+  // 'Services' and 'race services' in particular: the stock item's name is not the category,
+  // and the comparison is not case-folded (QuickBooks category names are what they are).
+  for (const category of [null, undefined, '', 'Axles', 'Services', 'race services']) {
+    assert.ok(!isManagerOnlyCategory(category), `${category} must not be manager-only`);
+  }
+});
+
+test('worker-visible and manager-only are disjoint, and neither is empty', () => {
+  // `managerSellableItemSql` is literally the OR of the two, so the manager seeing a superset
+  // of the worker's catalogue is true by construction; this pins down that the two halves of
+  // that union never overlap, which is what makes "parts plus services" a clean split.
+  for (const c of VISIBILITY_CASES) {
+    if (c.workerVisible) assert.ok(!c.managerOnly, `${c.label} cannot be both`);
+  }
+  assert.ok(VISIBILITY_CASES.some((c) => c.workerVisible));
+  assert.ok(VISIBILITY_CASES.some((c) => c.managerOnly));
+  assert.ok(managerSellableItemSql().includes(workerVisibleItemSql()));
+  assert.ok(managerSellableItemSql().includes(managerOnlyItemSql()));
+});
+
+test('the SQL fragments qualify every column when given a table alias', () => {
+  // The popular-parts query joins `items` as `i`, so an unqualified `active` there would be
+  // an ambiguous-column error at runtime — a page-level 500 no other test would catch.
+  const aliased = workerVisibleItemSql('i');
+  const withoutQualified = aliased.replace(/\bi\.\w+/g, '');
+  for (const column of ['active', 'type', 'sku', 'category']) {
+    assert.match(aliased, new RegExp(`\\bi\\.${column}\\b`), `${column} is not aliased`);
+    assert.ok(!new RegExp(`\\b${column}\\b`).test(withoutQualified), `${column} appears unqualified`);
+  }
+  // And no alias means no prefix, so the fragment still drops into a bare `FROM items`.
+  assert.ok(!workerVisibleItemSql().includes('i.'));
+});
+
+test('the SQL fragments carry no bind placeholders, so they compose into any query', () => {
+  for (const sql of [workerVisibleItemSql(), managerOnlyItemSql(), managerSellableItemSql()]) {
+    assert.ok(!/\$\d/.test(sql), sql);
+  }
+});
+
+test('the manager-only category is single-quote-safe in SQL', () => {
+  // The list is code-owned, never request-derived, so it is inlined rather than bound. That
+  // is only safe while it stays escaped — this assertion keeps a future "Mike's Services"
+  // from becoming a syntax error or worse.
+  for (const category of MANAGER_ONLY_CATEGORIES) {
+    assert.ok(
+      managerOnlyItemSql().includes(`'${category.replace(/'/g, "''")}'`),
+      `${category} is not quoted as expected`
+    );
+  }
 });

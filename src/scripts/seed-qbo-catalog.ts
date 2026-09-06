@@ -1,5 +1,6 @@
 // Seed the QuickBooks *sandbox* with a realistic karting catalog: 9 part categories,
-// ~95 priced bilingual parts with SKUs, and 16 customers. Optionally deactivates Intuit's
+// ~95 priced bilingual parts with SKUs, one manager-only `Race Services` category with three
+// per-day service items, and 16 customers. Optionally deactivates Intuit's
 // stock landscaping demo records and deletes every invoice, so a tester opening the app sees
 // only racing data and only invoices they created themselves.
 //
@@ -26,8 +27,11 @@ import {
   DEMO_CATEGORIES,
   DEMO_CUSTOMERS,
   DEMO_PARTS,
+  DEMO_SERVICE_CATEGORY,
+  DEMO_SERVICES,
   STOCK_CUSTOMERS,
   STOCK_ITEMS,
+  STOCK_SERVICE_ITEMS,
 } from '../qbo/demo-catalog';
 import { INVOICES_ONLY, purgeTransactions, STOCK_DEMO_TRANSACTIONS } from '../qbo/purge';
 
@@ -38,6 +42,18 @@ import { INVOICES_ONLY, purgeTransactions, STOCK_DEMO_TRANSACTIONS } from '../qb
  * stock catalog undercuts the app. `79` is "Sales of Product Income" in this sandbox.
  */
 const INCOME_ACCOUNT_REF = '79';
+
+/**
+ * Service items book to a *different* account from parts: `1` is "Services"
+ * (Income / ServiceFeeIncome) in this sandbox, which is what service revenue is. Not `51`
+ * "Labor" — that is Income/OtherPrimaryIncome, and it would be wrong for the engine lease,
+ * which is rental income and not labour at all. One account for all three keeps the P&L
+ * split "parts vs services", which is the split Mike actually reads.
+ */
+const SERVICE_INCOME_ACCOUNT_REF = '1';
+
+/** Every category created, part folders plus the one manager-only service folder. */
+const ALL_CATEGORIES: readonly string[] = [...DEMO_CATEGORIES, DEMO_SERVICE_CATEGORY];
 
 const args = process.argv.slice(2);
 const flags = {
@@ -97,6 +113,27 @@ function validateDataset(): void {
     if (!DEMO_CATEGORIES.includes(part.category)) problems.push(`SKU ${part.sku}: unknown category "${part.category}".`);
   }
 
+  // Services go through exactly the same gauntlet as parts — same SKU shape, same
+  // bilingual-name rule, same 100-character ceiling, same no-$0 rule — because they are the
+  // same QuickBooks Item and land on the same customer invoice. The SKU namespace is shared
+  // too, so `seenSkus` carries over and a service colliding with a part is caught here.
+  for (const service of DEMO_SERVICES) {
+    if (!isValidSku(service.sku)) problems.push(`SKU "${service.sku}" is not a valid SKU shape.`);
+    if (seenSkus.has(service.sku)) problems.push(`SKU "${service.sku}" is duplicated in the dataset.`);
+    seenSkus.add(service.sku);
+
+    const name = checkBilingualName(service.en, service.es);
+    if (!name.ok) {
+      problems.push(
+        name.reason === 'too-long'
+          ? `SKU ${service.sku}: name is ${name.length} chars, over the QuickBooks limit of ${QBO_NAME_MAX_LENGTH}: "${name.name}"`
+          : `SKU ${service.sku}: name has an empty English or Spanish half.`
+      );
+    }
+
+    if (!(service.dayRate > 0)) problems.push(`SKU ${service.sku}: day rate must be greater than zero.`);
+  }
+
   const seenNames = new Set<string>();
   for (const customer of DEMO_CUSTOMERS) {
     if (seenNames.has(customer.displayName)) problems.push(`Customer "${customer.displayName}" is duplicated.`);
@@ -127,7 +164,7 @@ async function seedCategories(): Promise<{ ids: Map<string, string>; counts: Cou
   const ids = new Map<string, string>();
   const counts: Counts = { created: 0, adopted: 0 };
 
-  for (const name of DEMO_CATEGORIES) {
+  for (const name of ALL_CATEGORIES) {
     const found = byName.get(name);
     if (found) {
       ids.set(name, found.Id);
@@ -179,6 +216,119 @@ async function seedParts(categoryIds: Map<string, string>): Promise<Counts> {
     console.log(`  + ${part.sku.padEnd(15)} ${made.Name}`);
   }
   return counts;
+}
+
+/**
+ * The three manager-only service items (owner's decision, 09/06/2026: invoices may include
+ * team support, a mechanic and an engine lease, billed in whole days).
+ *
+ * Filed under the `Race Services` category, which is the *only* thing that makes them
+ * manager-only — the app reads `items.category` and hides them from workers (src/catalog.ts).
+ * Nothing about the item itself is special, which is the point: a future service is a
+ * QuickBooks entry Mike makes himself, with no app change.
+ *
+ * Idempotent by SKU like the parts, and sharing the same `bySku` namespace, so a re-run
+ * adopts all three and creates nothing.
+ */
+async function seedServices(categoryIds: Map<string, string>): Promise<Counts> {
+  const existing = await queryAll('Item', 'Active in (true, false)');
+  const bySku = new Set<string>(existing.filter((i) => i.Sku).map((i) => i.Sku));
+  const counts: Counts = { created: 0, adopted: 0 };
+  const parentId = categoryIds.get(DEMO_SERVICE_CATEGORY);
+  if (!parentId) die(`Unreachable: category "${DEMO_SERVICE_CATEGORY}" was neither created nor adopted.`);
+
+  for (const service of DEMO_SERVICES) {
+    if (bySku.has(service.sku)) {
+      counts.adopted += 1;
+      continue;
+    }
+    const name = checkBilingualName(service.en, service.es);
+    if (!name.ok) die(`Unreachable: SKU ${service.sku} failed validation after the pre-flight passed.`);
+
+    const made = await create('Item', {
+      Name: name.name,
+      Sku: service.sku,
+      // The unit is spelled out in both languages here as well as in the name: this is the
+      // text a bookkeeper reads in QuickBooks when they wonder what "× 3" meant.
+      Description: `${service.descEn} / ${service.descEs}`,
+      Type: 'Service',
+      IncomeAccountRef: { value: SERVICE_INCOME_ACCOUNT_REF },
+      // `UnitPrice` is the price of ONE RACE DAY. Quantity on the invoice line is therefore
+      // a number of days, and days are whole — which is why nothing in the app needs
+      // fractional quantities (`validateQty` stays integer-only).
+      UnitPrice: service.dayRate,
+      // Non-taxable, and for these it is not a workaround but the owner's billing model:
+      // prices quoted to customers are tax-inclusive and RPG remits tax separately, so the
+      // app must never compute tax. See design doc §28 n.28.
+      Taxable: false,
+      SubItem: true,
+      ParentRef: { value: parentId },
+      Active: true,
+    });
+    counts.created += 1;
+    console.log(`  + ${service.sku.padEnd(15)} ${made.Name}  $${service.dayRate}/day`);
+  }
+  return counts;
+}
+
+/**
+ * Re-file Intuit's two undeletable stock service items under `Race Services`.
+ *
+ * `Services` (Id 1) and `Hours` (Id 2) cannot be deactivated — they are the company's
+ * default sales product and default time-activity service, and QuickBooks refuses. So
+ * instead of fighting that, reclassify them: once their category is `Race Services` they are
+ * manager-only like the real services, which is a defensible place for them to sit rather
+ * than two unpriced rows in a worker's parts list.
+ *
+ * A refusal is reported and tolerated, not thrown. `WORKER_VISIBLE_ITEM_SQL` requires a SKU
+ * and neither of these has one, so workers are protected either way; this is tidiness on top
+ * of the real defence, and it must not be able to fail a seeding run.
+ */
+async function reparentStockServices(
+  categoryIds: Map<string, string>
+): Promise<{ moved: number; already: number; skipped: number; refused: string[] }> {
+  const parentId = categoryIds.get(DEMO_SERVICE_CATEGORY);
+  if (!parentId) die(`Unreachable: category "${DEMO_SERVICE_CATEGORY}" was neither created nor adopted.`);
+
+  const items = await queryAll('Item', 'Active in (true, false)');
+  const byId = new Map<string, any>(items.map((i) => [i.Id, i]));
+  const result = { moved: 0, already: 0, skipped: 0, refused: [] as string[] };
+
+  for (const target of STOCK_SERVICE_ITEMS) {
+    const record = byId.get(target.id);
+    // Same (id, name) both-must-match belt as deactivateStock, and for the same reason: if
+    // ids ever shifted we would be re-parenting some *other* item, which for a real racing
+    // part would hide it from every worker.
+    if (!record || stripDeletedSuffix(record.Name) !== target.name) {
+      console.log(`  ? Item ${target.id} (${target.name}) not found or renamed — skipped`);
+      result.skipped += 1;
+      continue;
+    }
+    if (record.ParentRef?.value === parentId) {
+      result.already += 1; // re-run is a no-op
+      continue;
+    }
+    try {
+      // Sparse update: SubItem + ParentRef only. Everything else about these two items is
+      // Intuit's and stays Intuit's.
+      await update('Item', {
+        Id: record.Id,
+        SyncToken: record.SyncToken,
+        sparse: true,
+        SubItem: true,
+        ParentRef: { value: parentId },
+      });
+      console.log(`  → moved ${target.name} under ${DEMO_SERVICE_CATEGORY}`);
+      result.moved += 1;
+    } catch (err) {
+      const message =
+        err instanceof QboError ? (err.fault?.detail ?? err.fault?.message ?? err.message) : String(err);
+      console.log(`  ! ${target.name} could not be re-parented: ${message}`);
+      console.log(`    (harmless: it has no SKU, so workers cannot see it either way)`);
+      result.refused.push(`${target.name}: ${message}`);
+    }
+  }
+  return result;
 }
 
 async function seedCustomers(): Promise<Counts> {
@@ -297,7 +447,10 @@ async function deactivateStock(): Promise<DeactivateResult> {
 
 try {
   validateDataset();
-  console.log(`Dataset validated: ${DEMO_CATEGORIES.length} categories, ${DEMO_PARTS.length} parts, ${DEMO_CUSTOMERS.length} customers.`);
+  console.log(
+    `Dataset validated: ${ALL_CATEGORIES.length} categories, ${DEMO_PARTS.length} parts, ` +
+      `${DEMO_SERVICES.length} services, ${DEMO_CUSTOMERS.length} customers.`
+  );
 
   // The environment half of the guard runs *before* the first HTTP call, so an operator
   // pointed at production is told that, rather than getting whatever error a production
@@ -351,6 +504,9 @@ try {
   const { ids: categoryIds, counts: categoryCounts } = await seedCategories();
   console.log('Parts…');
   const partCounts = await seedParts(categoryIds);
+  console.log(`Services (${DEMO_SERVICE_CATEGORY}, manager-only)…`);
+  const serviceCounts = await seedServices(categoryIds);
+  const reparented = await reparentStockServices(categoryIds);
   console.log('Customers…');
   const customerCounts = await seedCustomers();
 
@@ -363,6 +519,12 @@ try {
   console.log('');
   console.log(`Categories: ${categoryCounts.created} created, ${categoryCounts.adopted} adopted.`);
   console.log(`Parts:      ${partCounts.created} created, ${partCounts.adopted} adopted.`);
+  console.log(`Services:   ${serviceCounts.created} created, ${serviceCounts.adopted} adopted.`);
+  console.log(
+    `Stock svcs: ${reparented.moved} re-parented under ${DEMO_SERVICE_CATEGORY}, ` +
+      `${reparented.already} already there, ${reparented.skipped} skipped, ${reparented.refused.length} refused.`
+  );
+  for (const r of reparented.refused) console.log(`              ! ${r}`);
   console.log(`Customers:  ${customerCounts.created} created, ${customerCounts.adopted} adopted.`);
   if (flags.deactivateDemo) {
     console.log(`Stock data: ${stock.customers} customers and ${stock.items} items deactivated, ${stock.skipped} skipped.`);

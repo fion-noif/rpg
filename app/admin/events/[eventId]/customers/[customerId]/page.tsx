@@ -8,6 +8,7 @@ import { notFound } from 'next/navigation';
 import { q } from '@/src/db';
 import { requireAdminPage } from '@/src/admin-page-auth';
 import { batchFor, batchWithLines } from '@/src/charges';
+import { isManagerOnlyCategory, managerSellableItemSql } from '@/src/catalog';
 import CustomerReview, { type CatalogOption, type ReviewLine } from './CustomerReview';
 
 export const dynamic = 'force-dynamic';
@@ -23,6 +24,7 @@ interface LineRow {
   voided_at: string | null;
   worker_name: string;
   voided_by_name: string | null;
+  category: string | null;
 }
 
 /**
@@ -61,14 +63,19 @@ export default async function CustomerReviewPage({
 
   // Voided lines are read too, not filtered out: §17 wants the manager to be able to see
   // what was changed and by whom, so they render in a collapsed audit section.
+  // `i.category` is a LEFT JOIN and a *display* hint only: it says how QuickBooks classifies
+  // this item today, which is what decides whether the row's quantity reads "3 days" or "3".
+  // The money still comes from the line's own snapshot (§16) — the join can never change an
+  // amount, and LEFT so a line whose item has since vanished from QuickBooks still renders.
   const rows = await q<LineRow>(
     `SELECT l.id, l.item_qbo_id AS item_id, l.sku, l.item_name, l.unit_price::float AS unit_price,
             l.qty::float AS qty, l.updated_at, l.voided_at,
-            w.name AS worker_name, vb.name AS voided_by_name
+            w.name AS worker_name, vb.name AS voided_by_name, i.category
      FROM submission_lines l
      JOIN submissions s ON s.id = l.submission_id
      JOIN workers w ON w.id = s.worker_id
      LEFT JOIN workers vb ON vb.id = l.voided_by
+     LEFT JOIN items i ON i.qbo_id = l.item_qbo_id
      WHERE s.event_id = $1 AND s.customer_qbo_id = $2
      ORDER BY l.item_name, l.id`,
     [eventId, customerId]
@@ -85,16 +92,23 @@ export default async function CustomerReviewPage({
     voided: r.voided_at != null,
     submittedBy: submitter(r.worker_name),
     voidedBy: r.voided_at ? submitter(r.voided_by_name) : null,
+    isService: isManagerOnlyCategory(r.category),
   }));
 
-  // Same catalogue shape and filter as app/page.tsx: only what QuickBooks still sells is
-  // addable (design doc §9, §23 Rule 3).
-  const catalog = await q<CatalogOption>(
-    `SELECT qbo_id AS id, sku, name, description, unit_price::float AS price
+  // Only what QuickBooks still sells is addable (design doc §9, §23 Rule 3) — but *wider*
+  // than the worker catalogue in app/page.tsx: the manager's list is parts **plus** the
+  // manager-only `Race Services` items (owner's decision 09/06/2026, §17). `category` comes
+  // back so the picker can group services separately and label their quantity as days.
+  const catalogRows = await q<CatalogOption & { category: string | null }>(
+    `SELECT qbo_id AS id, sku, name, description, unit_price::float AS price, category
      FROM items
-     WHERE active AND type IN ('NonInventory', 'Service', 'Inventory')
+     WHERE ${managerSellableItemSql()}
      ORDER BY name`
   );
+  const catalog: CatalogOption[] = catalogRows.map((row) => ({
+    ...row,
+    isService: isManagerOnlyCategory(row.category),
+  }));
 
   // Approval closes the customer to any further change, worker or manager (plan §3), and the
   // batch row is also the whole state of the Approve & Post panel below.

@@ -3,6 +3,7 @@ import { q } from '@/src/db';
 import { workerByToken, assignmentsFor, SESSION_COOKIE } from '@/src/workers';
 import { usageForCustomer, type UsageLine } from '@/src/usage';
 import { strings } from '@/src/i18n';
+import { workerVisibleItemSql } from '@/src/catalog';
 import WorkerApp, { type CatalogItem } from './WorkerApp';
 
 export const dynamic = 'force-dynamic';
@@ -22,18 +23,30 @@ export default async function Page() {
 
   const customers = await assignmentsFor(worker.id);
 
+  // Physical parts only. Service items (`Race Services`) are manager-only — a worker records
+  // what they fitted to a kart, not how many days of mechanic time to bill (§8 least
+  // privilege). The rule lives in src/catalog.ts; before it, the bare
+  // `type IN ('NonInventory','Service','Inventory')` filter here is what put Intuit's stock
+  // `Services` and `Hours` items on every worker's phone.
   const catalog = await q<CatalogItem>(
     `SELECT qbo_id AS id, sku, name, description, unit_price::float AS price, category
      FROM items
-     WHERE active AND type IN ('NonInventory', 'Service', 'Inventory')
+     WHERE ${workerVisibleItemSql()}
      ORDER BY name`
   );
 
   // Popular = most-used items for this event; empty until usage accumulates (M3 refines this).
+  //
+  // Filtered through the same predicate, not just ranked: a *manager* can add a service line
+  // during review (§17) and that line is real usage, so without the join a heavily-serviced
+  // event would surface "Mechanic (per day)" in the worker's popular strip — the one place a
+  // hidden item could still reach a worker's thumb.
   const popular = await q<{ id: string }>(
     `SELECT l.item_qbo_id AS id
-     FROM submission_lines l JOIN submissions s ON s.id = l.submission_id
-     WHERE s.event_id = $1 AND l.voided_at IS NULL
+     FROM submission_lines l
+     JOIN submissions s ON s.id = l.submission_id
+     JOIN items i ON i.qbo_id = l.item_qbo_id
+     WHERE s.event_id = $1 AND l.voided_at IS NULL AND ${workerVisibleItemSql('i')}
      GROUP BY l.item_qbo_id ORDER BY SUM(l.qty) DESC LIMIT 5`,
     [worker.event_id]
   );

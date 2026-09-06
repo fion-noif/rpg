@@ -22,6 +22,11 @@ export interface ReviewLine {
   voided: boolean;
   submittedBy: string;
   voidedBy: string | null;
+  /**
+   * A manager-only service item rather than a physical part (`Race Services`, src/catalog.ts).
+   * Changes only how the row reads: its quantity is a number of **race days**, not units.
+   */
+  isService: boolean;
 }
 
 export interface CatalogOption {
@@ -30,6 +35,8 @@ export interface CatalogOption {
   name: string;
   description: string | null;
   price: number | null;
+  /** True for the manager-only service items. Workers never receive one of these. */
+  isService: boolean;
 }
 
 /** One row of the review: every live line for the same part, collapsed (design doc §17). */
@@ -42,10 +49,22 @@ interface ItemGroup {
   total: number | null;
   submitters: string[];
   lineIds: number[];
+  isService: boolean;
 }
 
 function money(n: number | null): string {
   return n == null ? '—' : `$${n.toFixed(2)}`;
+}
+
+/**
+ * Quantity as the manager should read it. Services are billed per race **day** and parts per
+ * unit (owner's decision, 09/06/2026), and both are whole numbers — so this is a label, not a
+ * different number format. Spelling out "3 days" next to "Mechanic (per day)" is what makes
+ * the line total arithmetically obvious at the last stop before money moves.
+ */
+function qtyLabel(qty: number, isService: boolean): string {
+  if (!isService) return String(qty);
+  return `${qty} ${qty === 1 ? 'day' : 'days'}`;
 }
 
 export default function CustomerReview(props: {
@@ -68,6 +87,10 @@ export default function CustomerReview(props: {
   const [search, setSearch] = useState('');
   const [addItemId, setAddItemId] = useState('');
   const [addQty, setAddQty] = useState('1');
+  // Separate state from the part picker above: a half-filled "add a part" must not silently
+  // submit itself when the manager reaches for the service control instead.
+  const [addServiceId, setAddServiceId] = useState('');
+  const [addServiceDays, setAddServiceDays] = useState('1');
   const [showAudit, setShowAudit] = useState(false);
 
   const live = props.lines.filter((l) => !l.voided);
@@ -85,6 +108,7 @@ export default function CustomerReview(props: {
         total: 0,
         submitters: [],
         lineIds: [],
+        isService: line.isService,
       };
       g.qty += line.qty;
       // Two workers can have recorded the same part at different price snapshots
@@ -102,8 +126,22 @@ export default function CustomerReview(props: {
   const runningTotal = groups.reduce((sum, g) => sum + (g.total ?? 0), 0);
   const anyUnpriced = groups.some((g) => g.total == null);
 
-  const results = useMemo(() => searchCatalog(props.catalog, search) ?? props.catalog.slice(0, 30), [
-    props.catalog,
+  // Split only for the readout, never for the arithmetic: `runningTotal` above is still the
+  // single sum of every line, because that sum — tax-inclusive by the owner's billing model
+  // — is the amount of record that goes to QuickBooks (§23 Rule 4, §28 n.28). These two
+  // subtotals exist so a manager can see at a glance how much of an invoice is labour.
+  const partsTotal = groups.reduce((sum, g) => (g.isService ? sum : sum + (g.total ?? 0)), 0);
+  const servicesTotal = groups.reduce((sum, g) => (g.isService ? sum + (g.total ?? 0) : sum), 0);
+  const hasServiceLines = groups.some((g) => g.isService);
+
+  // Parts and services are searched and picked separately (two controls, not one list with a
+  // divider) because they are priced in different units: mixing "× 4 tyres" and "× 3 days"
+  // in one dropdown is how a manager bills three days of a $52 tyre.
+  const partOptions = useMemo(() => props.catalog.filter((i) => !i.isService), [props.catalog]);
+  const serviceOptions = useMemo(() => props.catalog.filter((i) => i.isService), [props.catalog]);
+
+  const results = useMemo(() => searchCatalog(partOptions, search) ?? partOptions.slice(0, 30), [
+    partOptions,
     search,
   ]);
 
@@ -173,6 +211,32 @@ export default function CustomerReview(props: {
     }
   }
 
+  /**
+   * Add a service line — the same `op: 'add'` the parts path uses, so this reuses
+   * `adminAddLine` and its lock, snapshot, void-the-worker's-line and `admin_actions`
+   * behaviour verbatim (src/admin-review.ts). The only difference is what the quantity means
+   * to the person typing it: days, not units.
+   */
+  async function addService() {
+    const days = Number(addServiceDays);
+    if (!addServiceId) {
+      setError('Pick a service to add.');
+      return;
+    }
+    // Whole days, deliberately: services are charged per race day, and half a race day is
+    // not a thing anyone bills. Same integer rule as parts, so `validateQty` needs no
+    // fractional-quantity support (§28 n.29).
+    if (!Number.isInteger(days) || days <= 0) {
+      setError('Days must be a whole number greater than zero.');
+      return;
+    }
+    if (await send({ op: 'add', itemId: addServiceId, qty: days })) {
+      setAddServiceId('');
+      setAddServiceDays('1');
+      router.refresh();
+    }
+  }
+
   return (
     <>
       {error && <div className="admin-alert">{error}</div>}
@@ -186,10 +250,10 @@ export default function CustomerReview(props: {
       <table className="admin-table">
         <thead>
           <tr>
-            <th>Part</th>
+            <th>Part or service</th>
             <th>SKU</th>
-            <th className="num">Qty</th>
-            <th className="num">Unit price</th>
+            <th className="num">Qty / Days</th>
+            <th className="num">Unit / day price</th>
             <th className="num">Line total</th>
             <th>Recorded by</th>
             <th />
@@ -198,10 +262,16 @@ export default function CustomerReview(props: {
         <tbody>
           {groups.map((g) => (
             <tr key={g.itemId}>
-              <td>{g.itemName}</td>
+              <td>
+                {g.itemName}
+                {g.isService && <span className="admin-tag service">service · per day</span>}
+              </td>
               <td>{g.sku ?? ''}</td>
-              <td className="num">{g.qty}</td>
-              <td className="num">{money(g.unitPrice)}</td>
+              <td className="num">{qtyLabel(g.qty, g.isService)}</td>
+              <td className="num">
+                {money(g.unitPrice)}
+                {g.isService && g.unitPrice != null && <span className="admin-unit">/day</span>}
+              </td>
               <td className="num">{money(g.total)}</td>
               <td>{g.submitters.join(', ')}</td>
               <td className="admin-row-actions">
@@ -210,7 +280,9 @@ export default function CustomerReview(props: {
                   type="number"
                   min={1}
                   inputMode="numeric"
-                  aria-label={`New quantity for ${g.itemName}`}
+                  aria-label={
+                    g.isService ? `New number of days for ${g.itemName}` : `New quantity for ${g.itemName}`
+                  }
                   placeholder={String(g.qty)}
                   value={drafts[g.itemId] ?? ''}
                   disabled={locked || busy}
@@ -242,10 +314,29 @@ export default function CustomerReview(props: {
           )}
         </tbody>
         <tfoot>
+          {hasServiceLines && (
+            <>
+              <tr>
+                <th colSpan={4}>Parts</th>
+                <th className="num">{money(partsTotal)}</th>
+                <th colSpan={2} />
+              </tr>
+              <tr>
+                <th colSpan={4}>Services (billed by the day)</th>
+                <th className="num">{money(servicesTotal)}</th>
+                <th colSpan={2} />
+              </tr>
+            </>
+          )}
           <tr>
             <th colSpan={4}>Total</th>
             <th className="num">{money(runningTotal)}</th>
-            <th colSpan={2}>{anyUnpriced ? 'excludes parts with no price' : ''}</th>
+            {/* Tax-inclusive by the owner's billing model: this sum IS the invoice total, and
+                the app never adds tax to it (§28 n.28). */}
+            <th colSpan={2}>
+              {anyUnpriced ? 'excludes parts with no price · ' : ''}
+              tax included
+            </th>
           </tr>
         </tfoot>
       </table>
@@ -254,7 +345,7 @@ export default function CustomerReview(props: {
         <h2>Add a missing part</h2>
         <p className="admin-note">
           Added parts are attributed to you by name. Only parts QuickBooks still sells are
-          listed.
+          listed. Services are added separately, below.
         </p>
         <input
           className="admin-input"
@@ -297,6 +388,55 @@ export default function CustomerReview(props: {
         </div>
       </div>
 
+      {/* Services: a separate card, not another row in the picker above. Managers only —
+          workers never see these items at all (§8), and their unit is a race day, so putting
+          them next to per-unit parts in one list invites exactly the wrong arithmetic. */}
+      {serviceOptions.length > 0 && (
+        <div className="admin-card admin-add-service">
+          <h2>Add a service</h2>
+          <p className="admin-note">
+            Services are billed <strong>by the race day</strong> — enter the number of days, not a
+            quantity. Workers cannot see or record these; only managers can add them, and the line
+            is attributed to you by name.
+          </p>
+          <div className="admin-add-row">
+            <select
+              className="admin-input"
+              aria-label="Service to add"
+              value={addServiceId}
+              disabled={locked || busy}
+              onChange={(e) => setAddServiceId(e.target.value)}
+            >
+              <option value="">Select a service…</option>
+              {serviceOptions.map((item) => (
+                <option key={item.id} value={item.id}>
+                  {item.sku ? `${item.sku} — ` : ''}
+                  {item.name}
+                  {item.price == null ? '' : ` (${money(item.price)}/day)`}
+                </option>
+              ))}
+            </select>
+            <label className="admin-days">
+              <span>Days</span>
+              <input
+                className="admin-input qty"
+                type="number"
+                min={1}
+                step={1}
+                inputMode="numeric"
+                aria-label="Days to bill"
+                value={addServiceDays}
+                disabled={locked || busy}
+                onChange={(e) => setAddServiceDays(e.target.value)}
+              />
+            </label>
+            <button className="admin-btn" disabled={locked || busy} onClick={addService}>
+              Add service
+            </button>
+          </div>
+        </div>
+      )}
+
       {voided.length > 0 && (
         <div className="admin-card admin-audit">
           <button className="admin-btn secondary" onClick={() => setShowAudit((s) => !s)}>
@@ -316,7 +456,7 @@ export default function CustomerReview(props: {
                 {voided.map((l) => (
                   <tr key={l.id} className="voided">
                     <td>{l.itemName}</td>
-                    <td className="num">{l.qty}</td>
+                    <td className="num">{qtyLabel(l.qty, l.isService)}</td>
                     <td>{l.submittedBy}</td>
                     <td>{l.voidedBy ?? '—'}</td>
                   </tr>

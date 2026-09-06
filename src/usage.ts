@@ -15,6 +15,7 @@
 // the (event, customer) participation row first — see `lockParticipation`.
 import type pg from 'pg';
 import { pool } from './db';
+import { workerVisibleItemSql } from './catalog';
 
 export const MAX_QTY = 999;
 
@@ -206,10 +207,23 @@ export async function setUsageQty(input: SetUsageQtyInput): Promise<SetUsageQtyR
       return { ok: true, line: null };
     }
 
-    // Snapshot name/price at write time (design doc §16) — only active items are addable.
-    const item = await client.query('SELECT sku, name, unit_price FROM items WHERE qbo_id = $1 AND active', [
-      itemId,
-    ]);
+    // Snapshot name/price at write time (design doc §16) — only items this *worker* may
+    // record are addable.
+    //
+    // The same predicate as the catalogue the worker was served, not merely `active`: hiding
+    // a manager-only service item from the picker is presentation, and presentation is not
+    // authorisation (§8 least privilege). A worker who guesses or replays a service item's
+    // QuickBooks id must be refused here, in the transaction, or a $450/day line lands on a
+    // customer's invoice under a worker's name.
+    //
+    // Rejected as the existing `'unknown-item'` rather than a new reason: from the worker's
+    // side that is the whole truth — no such item exists in their catalogue — and a distinct
+    // "this is a manager item" reason would only teach a prober that the id was real. The UI
+    // gains nothing from the distinction because no legitimate worker action can reach it.
+    const item = await client.query(
+      `SELECT sku, name, unit_price FROM items WHERE qbo_id = $1 AND ${workerVisibleItemSql()}`,
+      [itemId]
+    );
     if (item.rowCount === 0) {
       await client.query('ROLLBACK');
       return { ok: false, reason: 'unknown-item' };

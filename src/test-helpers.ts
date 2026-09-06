@@ -7,6 +7,7 @@ import { readFileSync } from 'node:fs';
 import type pg from 'pg';
 import { hashToken } from './workers';
 import { createAdmin, type AdminRole } from './admin/admins';
+import { MANAGER_ONLY_CATEGORIES } from './catalog';
 
 export async function applySchema(pool: pg.Pool): Promise<void> {
   await pool.query(readFileSync('db/schema.sql', 'utf8'));
@@ -62,11 +63,23 @@ export interface Fixtures {
   customerId: string;
   itemId: string;
   inactiveItemId: string;
+  /**
+   * An active, sellable item filed under a manager-only QuickBooks category — a service.
+   * Workers must not be able to see or record it; managers must be able to add it (§17).
+   */
+  serviceItemId: string;
+  /**
+   * Intuit's undeletable stock `Services` item, reproduced faithfully: active, sellable,
+   * **no SKU and no category**. The row that leaked onto workers' phones, and the reason
+   * `workerVisibleItemSql` requires a SKU rather than trusting the category alone.
+   */
+  uncategorizedServiceItemId: string;
 }
 
 /**
  * One event with one participating customer, two workers (each with a staff identity) both
- * assigned to that customer, one active item, one inactive item.
+ * assigned to that customer, one active part, one inactive part, one manager-only service,
+ * and one SKU-less uncategorized stock service.
  */
 export async function seedFixtures(pool: pg.Pool): Promise<Fixtures> {
   const {
@@ -91,6 +104,23 @@ export async function seedFixtures(pool: pg.Pool): Promise<Fixtures> {
     `INSERT INTO items (qbo_id, sku, name, unit_price, type, active, sync_token, raw, synced_at)
      VALUES ($1, 'SKU2', 'Inactive Part', 5, 'NonInventory', false, '0', '{}'::jsonb, now())`,
     [inactiveItemId]
+  );
+
+  // Priced per race day, like the real thing. 100 makes every service assertion's arithmetic
+  // readable at a glance (3 days = 300).
+  const serviceItemId = 'item-svc';
+  await pool.query(
+    `INSERT INTO items (qbo_id, sku, name, unit_price, type, category, active, sync_token, raw, synced_at)
+     VALUES ($1, 'SVC-TEST-DAY', 'Test Service (per day) - Servicio de prueba (por día)', 100,
+             'Service', $2, true, '0', '{}'::jsonb, now())`,
+    [serviceItemId, MANAGER_ONLY_CATEGORIES[0]]
+  );
+
+  const uncategorizedServiceItemId = 'item-stock-svc';
+  await pool.query(
+    `INSERT INTO items (qbo_id, sku, name, unit_price, type, category, active, sync_token, raw, synced_at)
+     VALUES ($1, NULL, 'Services', NULL, 'Service', NULL, true, '0', '{}'::jsonb, now())`,
+    [uncategorizedServiceItemId]
   );
 
   // The customer participates in the event (design doc §21) — this row must exist before
@@ -132,5 +162,7 @@ export async function seedFixtures(pool: pg.Pool): Promise<Fixtures> {
     customerId,
     itemId,
     inactiveItemId,
+    serviceItemId,
+    uncategorizedServiceItemId,
   };
 }

@@ -625,3 +625,48 @@ body {
   border-style: dashed;
   background: #fafafa;
 }
+
+/* Manager-only service lines on the §17 review page (owner's decision 09/06/2026).
+   Services are billed per race day rather than per unit, so everything here exists to make
+   that unit visible: a tag on the line, a "/day" suffix on the price, and a labelled Days
+   input on the separate add-service control. Workers never render any of this. */
+.admin-tag {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  vertical-align: 1px;
+  white-space: nowrap;
+}
+
+.admin-tag.service {
+  background: #eef2ff;
+  border: 1px solid #c7d2fe;
+  color: #3730a3;
+}
+
+.admin-unit {
+  margin-left: 2px;
+  color: #71717a;
+  font-size: 12px;
+}
+
+.admin-add-service {
+  margin-top: 20px;
+  border-left: 3px solid #c7d2fe;
+}
+
+/* The Days label sits with its input, not in a table header, because this control is the one
+   place a manager types a number of days and the unit must be unmissable. */
+.admin-days {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 600;
+  color: #3f3f46;
+}
