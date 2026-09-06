@@ -107,6 +107,33 @@ export async function create(entity: string, body: unknown): Promise<any> {
   return data[entity];
 }
 
+/**
+ * Sparse update: QuickBooks applies only the fields present in `body`, provided
+ * `sparse: true` travels with the `Id`/`SyncToken` pair. This is how a record is flagged
+ * inactive (design doc §23 Rule 3 — flag, never delete) without having to round-trip and
+ * re-send every other field, which is how you accidentally blank a bookkeeper's edits.
+ */
+export async function update(entity: string, body: { Id: string; SyncToken: string; [k: string]: unknown }): Promise<any> {
+  const data = await qboFetch(`/${entity.toLowerCase()}`, { method: 'POST', body: { sparse: true, ...body } });
+  return data[entity];
+}
+
+/**
+ * Hard-delete a transaction (`?operation=delete`). Only *transactions* — Invoice, Payment,
+ * … — can be deleted at all; name-list entities (Customer, Item) with any transaction
+ * history can only be flagged inactive, which is what `update` above is for.
+ *
+ * Lives here rather than in each caller so `QboError` (and therefore the retryable/4xx
+ * distinction src/charges.ts depends on) is produced by exactly one code path.
+ */
+export async function remove(entity: string, ref: { Id: string; SyncToken: string }): Promise<any> {
+  const data = await qboFetch(`/${entity.toLowerCase()}?operation=delete`, {
+    method: 'POST',
+    body: { Id: ref.Id, SyncToken: ref.SyncToken },
+  });
+  return data[entity];
+}
+
 export async function companyInfo(): Promise<any> {
   const tokens = await getValidTokens();
   const res = await query(`select * from CompanyInfo where Id = '${tokens.realm_id}'`);
