@@ -162,7 +162,6 @@ export default async function EventDetailPage({
             <th>Customer</th>
             <th>Recorded by</th>
             <th>Invoicing</th>
-            <th className="num">Tabs</th>
             <th />
           </tr>
         </thead>
@@ -185,7 +184,6 @@ export default async function EventDetailPage({
                   <span className="admin-muted">not approved</span>
                 )}
               </td>
-              <td className="num">{c.submissionCount}</td>
               <td className="num">
                 {!closed && (
                   <form action={removeCustomerAction}>
@@ -201,7 +199,7 @@ export default async function EventDetailPage({
           ))}
           {customers.length === 0 && (
             <tr>
-              <td className="empty-cell" colSpan={5}>
+              <td className="empty-cell" colSpan={4}>
                 No customers on this event yet.
               </td>
             </tr>

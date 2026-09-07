@@ -301,7 +301,6 @@ export interface EventCustomer {
   workers: string[];
   /** null when nothing has been approved yet. */
   batchStatus: 'APPROVED' | 'POSTED' | 'POST_FAILED' | null;
-  submissionCount: number;
 }
 
 export async function listCustomers(eventId: number): Promise<EventCustomer[]> {
@@ -310,10 +309,7 @@ export async function listCustomers(eventId: number): Promise<EventCustomer[]> {
       `SELECT ec.customer_qbo_id AS "qboId", c.display_name AS "displayName", c.active,
               ec.added_at AS "addedAt",
               COALESCE(asg.names, ARRAY[]::text[]) AS workers,
-              b.status AS "batchStatus",
-              (SELECT count(*)::int FROM submissions s
-                WHERE s.event_id = ec.event_id AND s.customer_qbo_id = ec.customer_qbo_id)
-                AS "submissionCount"
+              b.status AS "batchStatus"
        FROM event_customers ec
        JOIN customers c ON c.qbo_id = ec.customer_qbo_id
        LEFT JOIN charge_batches b
