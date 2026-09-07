@@ -73,14 +73,14 @@ export async function removeCustomerAction(form: FormData): Promise<never> {
 }
 
 export async function assignAction(form: FormData): Promise<never> {
-  await requireAdminAction();
-  const result = await assign(num(form, 'workerId'), str(form, 'customerQboId'));
+  const admin = await requireAdminAction();
+  const result = await assign(num(form, 'workerId'), str(form, 'customerQboId'), admin);
   finish(num(form, 'eventId'), result.ok ? undefined : result.reason);
 }
 
 export async function unassignAction(form: FormData): Promise<never> {
-  await requireAdminAction();
-  const result = await unassign(num(form, 'workerId'), str(form, 'customerQboId'));
+  const admin = await requireAdminAction();
+  const result = await unassign(num(form, 'workerId'), str(form, 'customerQboId'), admin);
   finish(num(form, 'eventId'), result.ok ? undefined : result.reason);
 }
 

@@ -12,12 +12,14 @@ import type { AdminActor } from './admin/admins';
 import { createStaff, listStaff } from './admin/staff';
 import {
   addCustomer,
+  addWorkerAndAssign,
   addWorkerToEvent,
   assign,
   closeEvent,
   createEvent,
   listCustomers,
   listEvents,
+  listUnposted,
   listWorkers,
   removeCustomer,
   removeWorkerFromEvent,
@@ -267,7 +269,7 @@ test('addCustomer is idempotent, listCustomers shows assigned worker names', asy
 
   const worker = await addWorkerToEvent({ eventId, newStaff: { name: 'Nia' } }, admin);
   assert.ok(worker.ok);
-  await assign(worker.workerId, fx.customerId);
+  await assign(worker.workerId, fx.customerId, admin);
 
   customers = await listCustomers(eventId);
   assert.deepEqual(customers[0].workers, ['Nia']);
@@ -281,7 +283,7 @@ test('removeCustomer undoes a mis-add but is refused once there is history', asy
   const eventId = await freshEvent();
   const worker = await addWorkerToEvent({ eventId, newStaff: { name: 'Nia' } }, admin);
   assert.ok(worker.ok);
-  await assign(worker.workerId, fx.customerId);
+  await assign(worker.workerId, fx.customerId, admin);
 
   // Clean removal also drops the assignment, so the worker stops seeing the customer.
   assert.deepEqual(await removeCustomer(eventId, fx.customerId, admin), { ok: true });
@@ -297,7 +299,7 @@ test('removeCustomer undoes a mis-add but is refused once there is history', asy
   });
 
   // Now record something, and the participation row becomes load-bearing history (§31).
-  await assign(worker.workerId, fx.customerId);
+  await assign(worker.workerId, fx.customerId, admin);
   const wrote = await setUsageQty({
     workerId: worker.workerId,
     eventId,
@@ -405,14 +407,14 @@ test('removeWorkerFromEvent undoes a mis-add but never destroys entry history', 
 
   const mistake = await addWorkerToEvent({ eventId, newStaff: { name: 'Wrong Person' } }, admin);
   assert.ok(mistake.ok && mistake.link);
-  await assign(mistake.workerId, fx.customerId);
+  await assign(mistake.workerId, fx.customerId, admin);
   assert.deepEqual(await removeWorkerFromEvent(mistake.workerId, admin), { ok: true });
   assert.equal(await workerByToken(tokenOf(mistake.link)), undefined);
   assert.equal((await listWorkers(eventId)).length, 0);
 
   const real = await addWorkerToEvent({ eventId, newStaff: { name: 'Nia' } }, admin);
   assert.ok(real.ok);
-  await assign(real.workerId, fx.customerId);
+  await assign(real.workerId, fx.customerId, admin);
   await setUsageQty({
     workerId: real.workerId,
     eventId,
@@ -441,7 +443,7 @@ test('assign creates the participation row in the same transaction (§21)', asyn
 
   // No addCustomer call — assigning implies participation.
   assert.deepEqual(await listCustomers(eventId), []);
-  assert.deepEqual(await assign(worker.workerId, fx.customerId), { ok: true });
+  assert.deepEqual(await assign(worker.workerId, fx.customerId, admin), { ok: true });
 
   const customers = await listCustomers(eventId);
   assert.equal(customers.length, 1);
@@ -449,19 +451,116 @@ test('assign creates the participation row in the same transaction (§21)', asyn
   assert.deepEqual((await listWorkers(eventId))[0].customers, [fx.customerId]);
 
   // Repeat assign is a no-op, not a unique violation.
-  assert.deepEqual(await assign(worker.workerId, fx.customerId), { ok: true });
+  assert.deepEqual(await assign(worker.workerId, fx.customerId, admin), { ok: true });
   assert.equal((await listWorkers(eventId))[0].customers.length, 1);
 
   // Unassign narrows access but leaves participation alone.
-  assert.deepEqual(await unassign(worker.workerId, fx.customerId), { ok: true });
+  assert.deepEqual(await unassign(worker.workerId, fx.customerId, admin), { ok: true });
   assert.deepEqual((await listWorkers(eventId))[0].customers, []);
   assert.equal((await listCustomers(eventId)).length, 1);
 
-  assert.deepEqual(await assign(worker.workerId, 'no-such-customer'), {
+  assert.deepEqual(await assign(worker.workerId, 'no-such-customer', admin), {
     ok: false,
     reason: 'unknown-customer',
   });
-  assert.deepEqual(await assign(999_999, fx.customerId), { ok: false, reason: 'unknown-worker' });
+  assert.deepEqual(await assign(999_999, fx.customerId, admin), { ok: false, reason: 'unknown-worker' });
+});
+
+test('assign and unassign each name the admin who did it, once', async (t) => {
+  if (!dbAvailable) return t.skip();
+  const eventId = await freshEvent();
+  const worker = await addWorkerToEvent({ eventId, newStaff: { name: 'Nia' } }, admin);
+  assert.ok(worker.ok);
+
+  await assign(worker.workerId, fx.customerId, admin);
+  await assign(worker.workerId, fx.customerId, admin); // no-op, must not log twice
+  await unassign(worker.workerId, fx.customerId, admin);
+  await unassign(worker.workerId, fx.customerId, admin); // no-op, must not log twice
+
+  const { rows } = await pool.query<{ action: string; customer_qbo_id: string; detail: any }>(
+    `SELECT action, customer_qbo_id, detail FROM admin_actions
+     WHERE event_id = $1 AND action IN ('assign-customer', 'unassign-customer')
+     ORDER BY id`,
+    [eventId]
+  );
+  assert.deepEqual(
+    rows.map((r) => r.action),
+    ['assign-customer', 'unassign-customer'],
+    'a repeat assign/unassign changes nothing, so it is not a decision worth an audit row'
+  );
+  for (const row of rows) {
+    assert.equal(row.customer_qbo_id, fx.customerId);
+    assert.equal(row.detail.workerId, worker.workerId);
+    assert.equal(row.detail.by, admin.name);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// addWorkerAndAssign — the customers-tab workflow, in one transaction
+// ---------------------------------------------------------------------------
+
+test('addWorkerAndAssign creates the person, the link, and the assignment together', async (t) => {
+  if (!dbAvailable) return t.skip();
+  const eventId = await freshEvent();
+
+  const result = await addWorkerAndAssign(
+    { eventId, newStaff: { name: 'Nia', language: 'es' } },
+    fx.customerId,
+    admin
+  );
+  assert.ok(result.ok);
+  assert.equal(result.name, 'Nia');
+  assert.ok(result.link, 'a brand-new participation must return its one-time link');
+
+  // The link authenticates, exactly as the plain add-worker path does.
+  const session = await workerByToken(tokenOf(result.link));
+  assert.ok(session);
+  assert.equal(session.id, result.workerId);
+  assert.equal(session.language, 'es');
+
+  // …and the assignment (plus the implied participation, §21) is there.
+  assert.deepEqual((await listWorkers(eventId))[0].customers, [fx.customerId]);
+  const customers = await listCustomers(eventId);
+  assert.equal(customers.length, 1);
+  assert.deepEqual(customers[0].workers, ['Nia']);
+});
+
+test('addWorkerAndAssign for someone already on the event still assigns them', async (t) => {
+  if (!dbAvailable) return t.skip();
+  const eventId = await freshEvent();
+  const first = await addWorkerToEvent({ eventId, newStaff: { name: 'Nia' } }, admin);
+  assert.ok(first.ok);
+
+  // The case a naive early-return would silently skip: the add half is a no-op, so it
+  // returns link: null — but the assignment is the whole reason the manager clicked.
+  const again = await addWorkerAndAssign({ eventId, staffId: first.staffId }, fx.customerId, admin);
+  assert.ok(again.ok);
+  assert.equal(again.workerId, first.workerId);
+  assert.equal(again.link, null, 'no second link: the token is never rotated out from under them');
+  assert.deepEqual((await listWorkers(eventId))[0].customers, [fx.customerId]);
+});
+
+test('addWorkerAndAssign rolls the worker back when the assignment fails', async (t) => {
+  if (!dbAvailable) return t.skip();
+  const eventId = await freshEvent();
+
+  const result = await addWorkerAndAssign(
+    { eventId, newStaff: { name: 'Rollback Rita' } },
+    'no-such-customer',
+    admin
+  );
+  assert.deepEqual(result, { ok: false, reason: 'unknown-customer' });
+
+  // The point of the single transaction: none of the first half survives. Two calls would
+  // have left Rita on the event holding a live magic link with nothing assigned.
+  const staff = await pool.query('SELECT 1 FROM staff WHERE name = $1', ['Rollback Rita']);
+  assert.equal(staff.rowCount, 0, 'the staff identity must not survive');
+  assert.deepEqual(await listWorkers(eventId), [], 'the participation row must not survive');
+  const logged = await pool.query(
+    `SELECT 1 FROM admin_actions WHERE event_id = $1 AND action = 'add-worker'`,
+    [eventId]
+  );
+  assert.equal(logged.rowCount, 0, 'the audit row must not survive either');
 });
 
 // ---------------------------------------------------------------------------
@@ -484,6 +583,9 @@ test('closeEvent refuses while customers are unposted, then force closes and des
     assert.equal(refused.customers.length, 1);
     assert.equal(refused.customers[0].qboId, fx.customerId);
     assert.equal(refused.customers[0].status, 'NOT_APPROVED');
+    // The close page shows this list to explain the refusal, so it must be the *same*
+    // list the guard refused on — one predicate, not a hand copy that can drift (§23 Rule 5).
+    assert.deepEqual(await listUnposted(eventId), refused.customers);
   }
   // A refused close changes nothing — most importantly, the link still works.
   const stillOpen = await pool.query('SELECT active, closed_at FROM events WHERE id = $1', [eventId]);
@@ -538,7 +640,7 @@ test('a closed event refuses every further mutation', async (t) => {
   const eventId = await freshEvent();
   const worker = await addWorkerToEvent({ eventId, newStaff: { name: 'Nia' } }, admin);
   assert.ok(worker.ok);
-  await assign(worker.workerId, fx.customerId);
+  await assign(worker.workerId, fx.customerId, admin);
   assert.equal((await closeEvent(eventId, admin, { force: true })).ok, true);
 
   assert.deepEqual(await addCustomer(eventId, fx.customerId, admin), { ok: false, reason: 'event-closed' });
@@ -549,8 +651,8 @@ test('a closed event refuses every further mutation', async (t) => {
   });
   assert.deepEqual(await rotateWorkerToken(worker.workerId, admin), { ok: false, reason: 'event-closed' });
   assert.deepEqual(await removeWorkerFromEvent(worker.workerId, admin), { ok: false, reason: 'event-closed' });
-  assert.deepEqual(await assign(worker.workerId, fx.customerId), { ok: false, reason: 'event-closed' });
-  assert.deepEqual(await unassign(worker.workerId, fx.customerId), { ok: false, reason: 'event-closed' });
+  assert.deepEqual(await assign(worker.workerId, fx.customerId, admin), { ok: false, reason: 'event-closed' });
+  assert.deepEqual(await unassign(worker.workerId, fx.customerId, admin), { ok: false, reason: 'event-closed' });
 });
 
 // ---------------------------------------------------------------------------

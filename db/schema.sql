@@ -250,6 +250,7 @@ CREATE TABLE IF NOT EXISTS admin_actions (
   action          TEXT NOT NULL, -- edit-qty|void-line|add-line|approve|post|post-failed|unapprove|close-event
                                  -- |add-customer|remove-customer|add-worker|rotate-token
                                  -- |remove-worker|edit-event-dates
+                                 -- |assign-customer|unassign-customer
   event_id        INTEGER REFERENCES events(id),
   customer_qbo_id TEXT REFERENCES customers(qbo_id),
   batch_id        INTEGER REFERENCES charge_batches(id) ON DELETE SET NULL,

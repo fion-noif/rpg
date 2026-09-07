@@ -264,7 +264,7 @@ try {
     workerIds.set(worker.name, result.workerId);
     links.set(worker.name, result.link);
     for (const customer of worker.customers) {
-      const assigned = await assign(result.workerId, customerIds.get(customer)!);
+      const assigned = await assign(result.workerId, customerIds.get(customer)!, MIKE);
       if (!assigned.ok) fail(`Could not assign "${worker.name}" to "${customer}": ${assigned.reason}`);
     }
   }

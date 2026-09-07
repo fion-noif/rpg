@@ -11,7 +11,7 @@
 //     (§17 "edits logged" / §23 Rule 4).
 import type pg from 'pg';
 import { pool } from '../db';
-import { hashToken, newToken, issueToken, revokeEventTokens } from '../workers';
+import { hashToken, newToken, issueToken, revokeEventTokens, type Queryable } from '../workers';
 import { config } from '../config';
 import { normalizeLanguage, normalizeName } from './staff';
 import type { AdminActor } from './admins';
@@ -502,7 +502,20 @@ export async function addWorkerToEvent(
   input: AddWorkerInput,
   admin: AdminActor
 ): Promise<AddWorkerResult> {
-  return withTx(async (client) => {
+  return withTx((client) => addWorkerTx(client, input, admin));
+}
+
+/**
+ * The body of `addWorkerToEvent`, taking the transaction instead of opening one, so
+ * `addWorkerAndAssign` can run it and the assignment as a single unit. Same grain as
+ * `lockEvent`/`logAction`, which have always taken a client.
+ */
+async function addWorkerTx(
+  client: pg.PoolClient,
+  input: AddWorkerInput,
+  admin: AdminActor
+): Promise<AddWorkerResult> {
+  {
     const event = await lockEvent(client, input.eventId);
     if (!event) return { ok: false as const, reason: 'unknown-event' as const };
     if (event.closed_at) return { ok: false as const, reason: 'event-closed' as const };
@@ -561,7 +574,7 @@ export async function addWorkerToEvent(
       name: inserted.rows[0].name,
       link: loginLink(token),
     };
-  });
+  }
 }
 
 export function loginLink(token: string): string {
@@ -648,30 +661,116 @@ export type AssignResult =
  * event includes, so the participation row is created here in the same transaction rather
  * than making the manager remember the two-step.
  */
-export async function assign(workerId: number, customerQboId: string): Promise<AssignResult> {
+export async function assign(
+  workerId: number,
+  customerQboId: string,
+  admin: AdminActor
+): Promise<AssignResult> {
+  return withTx((client) => assignTx(client, workerId, customerQboId, admin));
+}
+
+/**
+ * The body of `assign`, taking the transaction instead of opening one.
+ *
+ * NEVER reach for the exported `assign` from inside another `withTx`. That would check out
+ * a *second* pool client and block on this `FOR UPDATE OF w` against a `workers` row the
+ * outer transaction has inserted but not committed — a self-deadlock that pins a connection
+ * until the statement timeout, and with a small pool exhausts it. Composing means calling
+ * this core with the caller's client, which is the whole reason it exists.
+ */
+async function assignTx(
+  client: pg.PoolClient,
+  workerId: number,
+  customerQboId: string,
+  admin: AdminActor
+): Promise<AssignResult> {
+  // Lock order is event-then-worker across this module (`lockEvent` first in every
+  // event-scoped mutation, worker-only here). A function that took them the other way
+  // round would close a deadlock cycle — don't.
+  const res = await client.query<{ event_id: number; closed_at: string | null }>(
+    `SELECT w.event_id, e.closed_at FROM workers w JOIN events e ON e.id = w.event_id
+     WHERE w.id = $1 AND NOT w.is_admin
+     FOR UPDATE OF w`,
+    [workerId]
+  );
+  if (res.rows.length === 0) return { ok: false as const, reason: 'unknown-worker' as const };
+  if (res.rows[0].closed_at) return { ok: false as const, reason: 'event-closed' as const };
+  const eventId = res.rows[0].event_id;
+
+  const customer = await client.query('SELECT 1 FROM customers WHERE qbo_id = $1', [customerQboId]);
+  if (customer.rowCount === 0) return { ok: false as const, reason: 'unknown-customer' as const };
+
+  await client.query(
+    `INSERT INTO event_customers (event_id, customer_qbo_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+    [eventId, customerQboId]
+  );
+  const inserted = await client.query(
+    `INSERT INTO assignments (worker_id, customer_qbo_id) VALUES ($1, $2)
+     ON CONFLICT DO NOTHING RETURNING id`,
+    [workerId, customerQboId]
+  );
+  // Re-assigning an already-assigned customer is a no-op, not an audit-worthy event —
+  // same rule `addCustomer` follows for a duplicate add.
+  if (inserted.rows.length > 0) {
+    await logAction(client, { action: 'assign-customer', admin, eventId, customerQboId, detail: { workerId } });
+  }
+  return { ok: true as const };
+}
+
+export type AddWorkerAndAssignResult =
+  | {
+      ok: true;
+      workerId: number;
+      staffId: number;
+      name: string;
+      /** As `AddWorkerResult.link`: a string only on the call that created the worker. */
+      link: string | null;
+    }
+  | {
+      ok: false;
+      /**
+       * The union of both legs. `unknown-worker` should be unreachable — the worker was just
+       * inserted under the event lock — but it is listed rather than cast away: narrowing it
+       * off would encode a claim about lock behaviour that a future edit could quietly break,
+       * and every reason here already has copy in the UI's message maps.
+       */
+      reason:
+        | 'unknown-event'
+        | 'event-closed'
+        | 'unknown-staff'
+        | 'invalid-name'
+        | 'unknown-customer'
+        | 'unknown-worker';
+    };
+
+/**
+ * The customers-tab workflow in one transaction: put a person on the event (creating their
+ * staff identity if they are new) *and* point them at this customer.
+ *
+ * One transaction because two would not be safe. Sequencing `addWorkerToEvent` then `assign`
+ * lets the first commit — staff row, worker row, token hash, audit row — and the second
+ * fail, leaving a worker holding a live magic link with nothing assigned. The manager sees
+ * an error after a credential was really minted, and may already have sent it; the worker
+ * logs in to "No customers assigned to you yet". Here a failed assignment rolls the whole
+ * thing back, because `withTx` commits only on `ok: true`.
+ *
+ * Idempotency is inherited from `addWorkerTx`: re-running for someone already on the event
+ * returns `link: null` and still makes the assignment.
+ */
+export async function addWorkerAndAssign(
+  input: AddWorkerInput,
+  customerQboId: string,
+  admin: AdminActor
+): Promise<AddWorkerAndAssignResult> {
   return withTx(async (client) => {
-    const res = await client.query<{ event_id: number; closed_at: string | null }>(
-      `SELECT w.event_id, e.closed_at FROM workers w JOIN events e ON e.id = w.event_id
-       WHERE w.id = $1 AND NOT w.is_admin
-       FOR UPDATE OF w`,
-      [workerId]
-    );
-    if (res.rows.length === 0) return { ok: false as const, reason: 'unknown-worker' as const };
-    if (res.rows[0].closed_at) return { ok: false as const, reason: 'event-closed' as const };
-    const eventId = res.rows[0].event_id;
-
-    const customer = await client.query('SELECT 1 FROM customers WHERE qbo_id = $1', [customerQboId]);
-    if (customer.rowCount === 0) return { ok: false as const, reason: 'unknown-customer' as const };
-
-    await client.query(
-      `INSERT INTO event_customers (event_id, customer_qbo_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
-      [eventId, customerQboId]
-    );
-    await client.query(
-      `INSERT INTO assignments (worker_id, customer_qbo_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
-      [workerId, customerQboId]
-    );
-    return { ok: true as const };
+    const added = await addWorkerTx(client, input, admin);
+    if (!added.ok) return added;
+    // The event row is already locked by addWorkerTx, so this can only fail on the customer;
+    // the other arms stay in the union rather than being cast away, because narrowing here
+    // would be a claim about lock behaviour a future edit could quietly break.
+    const assigned = await assignTx(client, added.workerId, customerQboId, admin);
+    if (!assigned.ok) return assigned;
+    return added;
   });
 }
 
@@ -681,10 +780,14 @@ export type UnassignResult = { ok: true } | { ok: false; reason: 'unknown-worker
  * Takes a customer off a worker's list. Participation and any tab the worker already opened
  * are left alone — this only changes what they can still write to (§8 least privilege).
  */
-export async function unassign(workerId: number, customerQboId: string): Promise<UnassignResult> {
+export async function unassign(
+  workerId: number,
+  customerQboId: string,
+  admin: AdminActor
+): Promise<UnassignResult> {
   return withTx(async (client) => {
-    const res = await client.query<{ closed_at: string | null }>(
-      `SELECT e.closed_at FROM workers w JOIN events e ON e.id = w.event_id
+    const res = await client.query<{ event_id: number; closed_at: string | null }>(
+      `SELECT w.event_id, e.closed_at FROM workers w JOIN events e ON e.id = w.event_id
        WHERE w.id = $1 AND NOT w.is_admin
        FOR UPDATE OF w`,
       [workerId]
@@ -692,10 +795,21 @@ export async function unassign(workerId: number, customerQboId: string): Promise
     if (res.rows.length === 0) return { ok: false as const, reason: 'unknown-worker' as const };
     if (res.rows[0].closed_at) return { ok: false as const, reason: 'event-closed' as const };
 
-    await client.query('DELETE FROM assignments WHERE worker_id = $1 AND customer_qbo_id = $2', [
-      workerId,
-      customerQboId,
-    ]);
+    const deleted = await client.query(
+      'DELETE FROM assignments WHERE worker_id = $1 AND customer_qbo_id = $2 RETURNING id',
+      [workerId, customerQboId]
+    );
+    // Only a real removal is logged: taking away a customer narrows what a worker can bill
+    // (§8), so it needs a name against it — but a no-op delete is not a decision.
+    if (deleted.rows.length > 0) {
+      await logAction(client, {
+        action: 'unassign-customer',
+        admin,
+        eventId: res.rows[0].event_id,
+        customerQboId,
+        detail: { workerId },
+      });
+    }
     return { ok: true as const };
   });
 }
@@ -736,19 +850,9 @@ export async function closeEvent(
     if (!event) return { ok: false as const, reason: 'unknown-event' as const };
     if (event.closed_at) return { ok: false as const, reason: 'already-closed' as const };
 
-    const unposted = await client.query<UnpostedCustomer>(
-      `SELECT ec.customer_qbo_id AS "qboId", c.display_name AS "displayName",
-              COALESCE(b.status, 'NOT_APPROVED') AS status
-       FROM event_customers ec
-       JOIN customers c ON c.qbo_id = ec.customer_qbo_id
-       LEFT JOIN charge_batches b
-              ON b.event_id = ec.event_id AND b.customer_qbo_id = ec.customer_qbo_id
-       WHERE ec.event_id = $1 AND b.status IS DISTINCT FROM 'POSTED'
-       ORDER BY c.display_name`,
-      [eventId]
-    );
-    if (unposted.rows.length > 0 && !options.force) {
-      return { ok: false as const, reason: 'unposted-customers' as const, customers: unposted.rows };
+    const unposted = await unpostedRows(client, eventId);
+    if (unposted.length > 0 && !options.force) {
+      return { ok: false as const, reason: 'unposted-customers' as const, customers: unposted };
     }
 
     await client.query('UPDATE events SET closed_at = now(), active = FALSE WHERE id = $1', [eventId]);
@@ -760,11 +864,41 @@ export async function closeEvent(
       detail: {
         forced: options.force === true,
         tokensRevoked,
-        unposted: unposted.rows.map((r) => ({ customer: r.qboId, status: r.status })),
+        unposted: unposted.map((r) => ({ customer: r.qboId, status: r.status })),
       },
     });
     return { ok: true as const, tokensRevoked };
   });
+}
+
+/**
+ * The customers standing between this event and a clean close: on the event, without a
+ * POSTED charge batch.
+ *
+ * One definition, two callers — `closeEvent`'s guard above and the close confirmation page,
+ * which has to show the manager exactly what the guard will refuse on. The close page used
+ * to be a section on the event page that re-derived this by filtering `listCustomers` on
+ * `batchStatus !== 'POSTED'`, a hand copy of the SQL below that could drift from it. On the
+ * money path (§23 Rule 5) the guard and the explanation must not be able to disagree.
+ */
+async function unpostedRows(client: Queryable, eventId: number): Promise<UnpostedCustomer[]> {
+  const res = await client.query(
+    `SELECT ec.customer_qbo_id AS "qboId", c.display_name AS "displayName",
+            COALESCE(b.status, 'NOT_APPROVED') AS status
+     FROM event_customers ec
+     JOIN customers c ON c.qbo_id = ec.customer_qbo_id
+     LEFT JOIN charge_batches b
+            ON b.event_id = ec.event_id AND b.customer_qbo_id = ec.customer_qbo_id
+     WHERE ec.event_id = $1 AND b.status IS DISTINCT FROM 'POSTED'
+     ORDER BY c.display_name`,
+    [eventId]
+  );
+  return res.rows as UnpostedCustomer[];
+}
+
+/** `unpostedRows` outside a transaction, for the close confirmation page. */
+export async function listUnposted(eventId: number): Promise<UnpostedCustomer[]> {
+  return unpostedRows(pool, eventId);
 }
 
 // ---------------------------------------------------------------------------
