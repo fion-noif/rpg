@@ -61,6 +61,12 @@ username and password (see *Admin accounts*), then:
    total, and an audit trail. Manager edits are append-only — the worker's
    original line is voided and a new line is recorded under the manager's own
    name, never overwritten.
+   - **Add a service** here too — team support, mechanic, engine lease —
+     billed in whole **days**, from a control kept separate from the parts
+     picker because the units differ (design doc §9.2). Workers never see
+     these items; only managers can add them. The running total shows a
+     parts/services split, but the number that goes to QuickBooks is the one
+     sum over every line.
 7. **Approve & Post** → one idempotent draft Invoice per customer per event.
    Approving locks the customer: further worker writes are refused (409) and
    their app goes read-only with "this customer's parts have been approved".
@@ -161,7 +167,8 @@ bilingual naming, §12.2's accent-tolerant search, or the manager's review scree
 These two scripts replace it with a believable karting dataset.
 
 ```sh
-# 1. Catalog: 9 categories, 95 priced bilingual parts with SKUs, 16 customers.
+# 1. Catalog: 9 part categories, 95 priced bilingual parts with SKUs, one
+#    manager-only `Race Services` category with 3 per-day services, 16 customers.
 npm run seed-qbo -- --yes
 
 # 2. Pull it into the app database.
@@ -204,8 +211,51 @@ nothing. Every flag is a no-op the second time.
 **Two things the seeder cannot fix.** QuickBooks structurally refuses to
 deactivate the items `Services` and `Hours` (they are the company's default
 product and default time-activity service) and any customer with a *billable*
-charge it will not let go of. They stay in the picker; the script reports each one
-and why.
+charge it will not let go of. The script reports each one and why.
+
+For the two items that is now harmless: the seeder **re-parents** them under
+`Race Services` with a sparse update, which reclassifies them as manager-only
+instead of leaving them as two unpriced taps in a worker's parts list. And even
+if QuickBooks ever refuses *that*, neither has a SKU, and the worker-visibility
+rule requires one — see below.
+
+### Manager-only service items
+
+The catalog carries three services, all billed **per race day** and all filed
+under the `Race Services` category:
+
+| SKU | Name | Rate |
+|---|---|---|
+| `SVC-TEAM-DAY` | Team Support (per day) - Apoyo de equipo (por día) | $450/day |
+| `SVC-MECH-DAY` | Mechanic (per day) - Mecánico (por día) | $350/day |
+| `SVC-ENGINE-DAY` | Engine Lease (per day) - Alquiler de motor (por día) | $300/day |
+
+The category is what makes them manager-only — Mike classifies an item in
+QuickBooks and the app reads the answer, so QuickBooks stays the source of truth
+and a future `Labor` category is one line in `MANAGER_ONLY_CATEGORIES`
+(`src/catalog.ts`). Not named `Services`, because QuickBooks enforces unique item
+names across every type and the stock demo already holds that name.
+
+That one rule lives in `src/catalog.ts` and is reused at every item call site —
+the worker catalog, the popular strip, the worker *write* path, and the manager's
+picker. Two properties worth knowing:
+
+- **`sku IS NOT NULL` is deliberate belt-and-braces.** Every real part has a SKU,
+  so requiring one costs nothing; what it buys is that an unclassified item
+  defaults to *hidden from workers*, which is the safe default on a screen where
+  every tap is a charge.
+- **It is enforced on writes, not just in the picker.** Hiding a row from a
+  dropdown is presentation, not authorisation. A worker who guesses a service
+  item's QuickBooks id is refused in the transaction, as `unknown-item` — the same
+  answer an unknown id gets, because confirming the id was real tells a prober
+  something.
+
+**Tax.** Prices quoted to customers already include tax; RPG remits separately.
+The app never computes tax — `sum(qty × unit_price)` *is* the invoice total, items
+are `Taxable: false`, and no `TxnTaxDetail`/`TaxCodeRef` is ever sent (design doc
+§9.1). Turning QuickBooks sales tax on would break the §23 Rule 4 guarantee that
+the approved amount equals the amount owed, so it is a design change, not a
+settings flip.
 
 **Parts are created `Taxable: false`, on purpose.** The app computes its running
 total and `charge_batch_lines` as `sum(qty * unit_price)` and sends that as the

@@ -336,6 +336,109 @@ Active
 
 The custom application synchronizes these values from QuickBooks.
 
+### 9.1 Tax
+
+**Decision (09/06/2026): all prices quoted to customers are
+tax-inclusive, and the application never computes tax.**
+
+RPG quotes a customer one number per part or service, and that number
+already contains whatever tax is owed. RPG then remits tax to the
+governments separately, on its own schedule. So:
+
+-   `sum(qty × unit_price)` over the approved lines **is** the
+    authoritative invoice total. There is no tax line, no tax rate, and
+    no tax column anywhere in the schema.
+-   Every item the app creates in QuickBooks is `Taxable: false`, and
+    the posted Invoice carries neither `TxnTaxDetail` nor a
+    `TaxCodeRef`. The `Taxable: false` on the seeded catalog is
+    therefore **correct by design**, not a workaround for a limitation.
+-   The manager's running total, the `charge_batch_lines` snapshot and
+    the QuickBooks `Invoice.TotalAmt` are all the same number, and are
+    reconciled as such by the tests.
+
+Why this is a design decision and not a settings flip: Rule 4
+(Section 23) guarantees that **the amount the manager approved is the
+amount the customer owes**. Turning QuickBooks sales tax on would make
+QuickBooks add tax *on top* of the `Amount` we send, so `TotalAmt` would
+silently exceed the approved figure and Rule 4 would no longer hold.
+Anyone wanting tax computed by QuickBooks in future must first decide
+what the manager approves — a pre-tax subtotal or a gross total — and
+change the review screen, the snapshot and Rule 4 together. It is not a
+checkbox.
+
+Revisit if RPG ever bills in a jurisdiction that requires tax to be
+itemised on the customer's invoice.
+
+### 9.2 Services on customer invoices
+
+**Decision (09/06/2026): invoices may include service lines as well as
+parts, billed in whole days, and only a manager may add them.**
+
+The three services are **team support**, **mechanic** and **engine
+lease**. Each is a plain QuickBooks Item — SKU, bilingual name, price,
+category — because a service on an invoice *is* just an item; there is
+no new entity, no new table and no new column.
+
+**Unit: one race day.** `UnitPrice` is the price of a single race day,
+so the invoice `Qty` is a number of days. Days are whole, which is why
+the existing integer rule in `validateQty` covers services unchanged and
+no fractional-quantity support is needed anywhere. The unit is stated
+redundantly and on purpose — in the item `Name` (`Mechanic (per day) -
+Mecánico (por día)`), in the SKU suffix (`SVC-MECH-DAY`), in the
+`Description`, and as a "Days" label on the manager's control — because
+the name is what QuickBooks prints for the customer, and
+`Mechanic (per day) × 3` has to be unambiguous without knowing this
+document exists.
+
+**Discriminator: a QuickBooks category.** An item is manager-only iff its
+category is in `MANAGER_ONLY_CATEGORIES` (today: `Race Services`). Mike
+classifies items in QuickBooks and the app reads the answer, so:
+
+-   QuickBooks stays the source of truth for what a thing *is*
+    (Section 3, Rule 2) — no app-side classification list to keep in
+    sync with the books.
+-   `items.category` already synchronizes (Section 18.1), so there is no
+    schema change.
+-   A future `Labor` category is one entry in one constant.
+
+The alternatives were worse. Matching on `Type = 'Service'` fails
+because Intuit's stock demo ships two undeletable `Service` items, and
+because a service could legitimately be `NonInventory`. A SKU prefix
+convention (`SVC-*`) makes the app the classifier and drifts the moment
+Mike adds an item from the QuickBooks UI.
+
+The category is `Race Services`, not `Services`: QuickBooks enforces a
+unique `Name` across every Item regardless of `Type`, and the stock
+demo's default sales product is already named `Services` — creating a
+category by that name returns fault 6000. `Race Services` is also the
+clearer name on an invoice line.
+
+**Visibility (Section 8, least privilege).** One rule, defined once, and
+applied to both the reads and the writes:
+
+-   *Worker-visible:* `active AND sku IS NOT NULL AND (category IS NULL
+    OR category NOT IN (<manager-only>))`. A worker records what they
+    fitted to a kart; they cannot know how many days of mechanic time to
+    bill, and an accidental tap must not be a $450 line.
+-   *Manager-visible:* the union of worker-visible and manager-only —
+    parts **plus** services.
+
+The `sku IS NOT NULL` clause is belt-and-braces. Every real part carries
+a SKU (Section 9/10), so it costs nothing; what it buys is that the two
+undeletable stock items `Services` and `Hours` stay off workers' phones
+even if re-parenting them under `Race Services` is ever refused, because
+they have no SKU and never will. An unclassified item therefore defaults
+to "hidden from workers", which is the safe default for a screen where
+every tap is a charge.
+
+Critically, the rule is enforced on the **write** path and not only in
+the picker: hiding a row from a dropdown is presentation, and
+presentation is not authorisation. A worker who guesses or replays a
+service item's QuickBooks id is refused in the transaction, with the
+same `unknown-item` reason an unknown id gets — from the worker's side
+that is the whole truth, and a distinct reason would only confirm to a
+prober that the id was real.
+
 ------------------------------------------------------------------------
 
 ## 10. Bilingual Parts Strategy
@@ -706,8 +809,21 @@ Management can:
 -   Change quantity.
 -   Remove an erroneous part.
 -   Add a missing part.
+-   **Add a service line** — team support, mechanic, engine lease — in
+    whole days (added 09/06/2026; see Section 9.2). This is manager-only
+    and is the *only* way a service reaches an invoice: workers never
+    see these items. It reuses the same add-line path as a part, so a
+    service line is voided, re-quantified, attributed and audited
+    exactly like everything else on the tab. It is presented as a
+    separate control from the parts picker, because the two are priced
+    in different units and mixing them in one list is how three days of
+    a $52 tyre gets billed.
 -   Review who submitted each item.
 -   Approve the final customer charges.
+
+The running total shows a parts/services split for readability, but the
+arithmetic is unchanged: one sum over every line, tax-inclusive, and
+that sum is what goes to QuickBooks (Section 9.1, Rule 4).
 
 ------------------------------------------------------------------------
 
@@ -748,6 +864,13 @@ On "Approve & Post," the app creates a single QuickBooks **Invoice** for
 the customer with usage aggregated into one line per SKU. The invoice is
 left as a draft (not emailed) so the bookkeeper can review and send it
 from QuickBooks.
+
+One invoice carries both parts and services (added 09/06/2026,
+Section 9.2) — a service is an ordinary `SalesItemLineDetail` line whose
+`Qty` is a number of days. Every line's `Amount` is
+`qty × unit_price` from the approved snapshot, and the invoice's
+`TotalAmt` is their sum with nothing added: no tax is sent and none is
+computed (Section 9.1).
 
 Why not the alternatives:
 
@@ -1190,6 +1313,22 @@ Added 08/08/2026:
     `SUBMITTED → APPROVED → POSTED_TO_QUICKBOOKS` with `POST_FAILED`.
 27. QuickBooks Essentials note: items must be non-inventory/service
     type (physical stock tracking is out of scope anyway).
+
+Added 09/06/2026 (owner's decisions):
+
+28. **Customer prices are tax-inclusive; the app never computes tax.**
+    `sum(qty × unit_price)` over the approved lines *is* the invoice
+    total. QuickBooks items are created `Taxable: false`, no
+    `TxnTaxDetail` or `TaxCodeRef` is ever sent, and no tax is stored
+    anywhere. RPG remits tax to the governments separately, out of band.
+    See Section 9.1.
+29. **Invoices may include service lines, billed in whole days.** Team
+    support, mechanic and engine lease. Service items are identified by
+    a QuickBooks **category** (`Race Services`), are hidden from workers
+    (Section 8 least privilege — workers record physical parts only),
+    and are addable by managers during review (Section 17). QuickBooks
+    remains the classification source of truth (Rule 2). See
+    Section 9.2.
 
 ------------------------------------------------------------------------
 
