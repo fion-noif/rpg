@@ -1,6 +1,6 @@
 import { cookies } from 'next/headers';
 import { q } from '@/src/db';
-import { workerByToken, assignmentsFor, SESSION_COOKIE } from '@/src/workers';
+import { resolveToken, assignmentsFor, SESSION_COOKIE } from '@/src/workers';
 import { usageForCustomer, type UsageLine } from '@/src/usage';
 import { strings } from '@/src/i18n';
 import { workerVisibleItemSql } from '@/src/catalog';
@@ -8,18 +8,31 @@ import WorkerApp, { type CatalogItem } from './WorkerApp';
 
 export const dynamic = 'force-dynamic';
 
-export default async function Page() {
+export default async function Page({
+  searchParams,
+}: {
+  /** `?link=expired|unknown` from app/login/[token]/route.ts on a failed login. */
+  searchParams: Promise<{ link?: string }>;
+}) {
   const token = (await cookies()).get(SESSION_COOKIE)?.value;
-  const worker = await workerByToken(token);
+  const [resolution, { link }] = await Promise.all([resolveToken(token), searchParams]);
 
-  if (!worker) {
+  if (!resolution.ok) {
+    // Two sources for the same verdict: an expired *cookie* is diagnosed here, while an
+    // expired *link* was diagnosed by the login route (which set no cookie, so there is
+    // nothing left here to inspect) and forwarded as `?link=`. Either is enough.
+    const expired = resolution.reason === 'expired' || link === 'expired';
+    const message = expired ? 'linkExpired' : 'noSession';
+    // Both languages, always: the worker who cannot get in is exactly the worker whose
+    // language preference we can no longer read.
     return (
       <div className="center-msg">
-        <p>{strings.en.noSession}</p>
-        <p lang="es">{strings.es.noSession}</p>
+        <p>{strings.en[message]}</p>
+        <p lang="es">{strings.es[message]}</p>
       </div>
     );
   }
+  const worker = resolution.worker;
 
   const customers = await assignmentsFor(worker.id);
 

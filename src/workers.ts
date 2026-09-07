@@ -1,5 +1,6 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { q, pool } from './db';
+import { config } from './config';
 
 /**
  * The subset of `pg.Pool` / `pg.PoolClient` these helpers need. Taking it as a parameter
@@ -30,18 +31,62 @@ export interface WorkerSession {
   event_name: string;
 }
 
-export async function workerByToken(token: string | undefined): Promise<WorkerSession | undefined> {
-  if (!token) return undefined;
+/**
+ * Why a token did not resolve, so the one screen a locked-out worker is looking at can say
+ * something true (M4). `expired` is deliberately distinguishable from `unknown` *only* on
+ * the login page: it tells whoever holds the token that it was once real, which is a small
+ * disclosure worth making to a mechanic whose link died overnight and worth nothing to the
+ * API routes, which keep answering a flat 401 either way.
+ */
+export type TokenResolution =
+  | { ok: true; worker: WorkerSession; expiresAt: Date }
+  | { ok: false; reason: 'unknown' | 'expired' };
+
+/**
+ * The single token primitive: matches the hash, then decides whether the weekend it belongs
+ * to is still live.
+ *
+ * Expiry is *derived* from `events.end_date` on every request rather than stamped on the
+ * token, so a manager who pushes a long weekend's end date back revives every worker's link
+ * at once — and, conversely, rotating a link can never smuggle a credential past the end of
+ * its event. The cutoff is midnight at the *end* of the day after `end_date`, in
+ * `config.eventTimeZone`: a link works for the whole day after the weekend finishes, so
+ * nobody is cut off while the trailers are still being loaded. It is computed in SQL so the
+ * database's clock is the only clock, matching every other `now()` in the app.
+ */
+export async function resolveToken(token: string | undefined): Promise<TokenResolution> {
+  if (!token) return { ok: false, reason: 'unknown' };
   // `token_hash IS NOT NULL` matters now that the column is nullable: revoked credentials
   // are NULLed rather than flagged, and the synthetic per-event manager worker never has
   // one, so neither must ever be reachable by hashing an attacker-supplied token.
-  const rows = await q<WorkerSession>(
-    `SELECT w.id, w.name, w.staff_id, w.language, w.event_id, e.code AS event_code, e.name AS event_name
+  //
+  // `e.active` stays in the WHERE rather than becoming a third reason: closing an event
+  // destroys the hashes in the same transaction (`revokeEventTokens`), so a closed event is
+  // already unreachable by hash and a separate 'closed' verdict would be dead code.
+  const rows = await q<WorkerSession & { expires_at: string; expired: boolean }>(
+    `SELECT w.id, w.name, w.staff_id, w.language, w.event_id,
+            e.code AS event_code, e.name AS event_name,
+            ((e.end_date + 2)::timestamp AT TIME ZONE $2) AS expires_at,
+            now() >= ((e.end_date + 2)::timestamp AT TIME ZONE $2) AS expired
      FROM workers w JOIN events e ON e.id = w.event_id
      WHERE w.token_hash = $1 AND w.token_hash IS NOT NULL AND e.active`,
-    [hashToken(token)]
+    [hashToken(token), config.eventTimeZone]
   );
-  return rows[0];
+  const row = rows[0];
+  if (!row) return { ok: false, reason: 'unknown' };
+  if (row.expired) return { ok: false, reason: 'expired' };
+  const { expires_at, expired, ...worker } = row;
+  return { ok: true, worker, expiresAt: new Date(expires_at) };
+}
+
+/**
+ * Session lookup for callers that only need "is this a worker, yes or no" — the two API
+ * routes, whose answer to every failure is the same 401. Kept as a wrapper over
+ * `resolveToken` rather than a second query so there is one definition of a live token.
+ */
+export async function workerByToken(token: string | undefined): Promise<WorkerSession | undefined> {
+  const resolution = await resolveToken(token);
+  return resolution.ok ? resolution.worker : undefined;
 }
 
 /**

@@ -27,6 +27,10 @@ export const strings = {
     offlineNote: 'Saved on this phone — will send when connection returns',
     noResults: 'No parts found',
     noSession: 'This link is not valid. Ask your manager for your personal link.',
+    // Distinct from noSession because the remedy is different: the link was real, the
+    // weekend is over, and only the manager can extend it or issue a new one (M4).
+    linkExpired:
+      'This link has expired — the event has ended. Ask your manager if you still need access.',
   },
   es: {
     customer: 'Cliente',
@@ -49,6 +53,8 @@ export const strings = {
     offlineNote: 'Guardado en este teléfono — se enviará cuando vuelva la conexión',
     noResults: 'No se encontraron piezas',
     noSession: 'Este enlace no es válido. Pide a tu gerente tu enlace personal.',
+    linkExpired:
+      'Este enlace ha caducado — el evento ya terminó. Pide acceso a tu gerente si aún lo necesitas.',
   },
 } as const;
 

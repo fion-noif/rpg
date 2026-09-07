@@ -55,6 +55,10 @@ username and password (see *Admin accounts*), then:
    gets a fresh magic link, **shown once in the UI**; only its SHA-256 hash is
    stored. Lost it? *Rotate link* issues a new one and kills the old. Assign each
    worker their customer(s).
+
+   Links stop working at the end of the day after the event's end date. If a
+   weekend runs long, push the end date back on the event page — rotating a link
+   will not help, because a new token derives the same expiry from the same event.
 5. **Workers record parts** on their phones: assigned customer(s) → search or
    popular parts → quantities. Writes queue in a local outbox and retry until the
    server confirms, so flaky track Wi-Fi doesn't lose entries. UI is
@@ -89,7 +93,8 @@ username and password (see *Admin accounts*), then:
 
 **CLI alternative to steps 2–4:** copy `seed.example.json`, edit (customer names
 must exactly match QuickBooks display names; set `startDate`/`endDate` to the
-weekend you are seeding), then `npm run seed -- myevent.json`.
+weekend you are seeding, or the links it prints may already be expired), then
+`npm run seed -- myevent.json`.
 It prints one magic link per worker. Re-running updates assignments and keeps
 existing links. `npm run rotate` re-issues a single worker's link.
 
