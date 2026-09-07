@@ -5,3 +5,4 @@ data/
 .next/
 myevent.json
 tsconfig.tsbuildinfo
+.claude/
