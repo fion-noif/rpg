@@ -9,15 +9,11 @@
 import { useActionState } from 'react';
 import { addWorkerAction } from './actions';
 import { MagicLink } from './MagicLink';
-import { emptyLinkState } from './types';
+import { emptyLinkState, type StaffOption } from './types';
 
-export interface StaffOption {
-  id: number;
-  name: string;
-  language: 'en' | 'es';
-  lastEventCode: string | null;
-  eventCount: number;
-}
+// StaffOption moved to ./types now that the customers-tab assign panel needs it too.
+// Re-exported so this file stays the import site anything already pointing here expects.
+export type { StaffOption };
 
 export function AddWorkerForm({ eventId, staff }: { eventId: number; staff: StaffOption[] }) {
   const [state, formAction, pending] = useActionState(addWorkerAction, emptyLinkState);

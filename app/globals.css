@@ -670,3 +670,112 @@ body {
   font-weight: 600;
   color: #3f3f46;
 }
+
+/* --- BEGIN: event tabs + assign panel (app/admin/events/[eventId]) -----------
+   Tab bar, the persistent event header, the customer filter row, and the
+   per-customer assign disclosure.
+
+   Deliberately NOT reusing .customer-tabs (line 47): that is the worker app's
+   mobile segmented control — flex:1 equal-width pills, 16px type, sized for a
+   480px .wrap. This is a desktop underline tab bar in a 960px .admin-wrap.
+   Only the `.active`-style convention carries over.
+
+   No z-index and no positioning anywhere in here, which is one of the reasons
+   the assign UI is a <details> row rather than a modal. */
+
+.admin-tabs {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid #e4e4e7;
+  margin: 16px 0 12px;
+}
+
+.admin-tabs a {
+  padding: 8px 14px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #71717a;
+  text-decoration: none;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+}
+
+.admin-tabs a[aria-current='page'] {
+  color: #18181b;
+  border-bottom-color: #18181b;
+}
+
+.admin-tabs .count {
+  color: #a1a1aa;
+  font-weight: 500;
+}
+
+/* The event header: dates line + the collapsed dates editor, spanning both tabs. */
+.admin-eventhead {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  margin: 0 0 4px;
+}
+
+.admin-eventhead .dates {
+  font-size: 13px;
+  color: #52525b;
+  font-variant-numeric: tabular-nums;
+}
+
+.admin-datesedit > summary,
+.admin-assign > summary {
+  font-size: 13px;
+  font-weight: 600;
+  color: #3f3f46;
+  cursor: pointer;
+  padding: 4px 0;
+}
+
+.admin-datesedit[open] > summary,
+.admin-assign[open] > summary {
+  color: #18181b;
+}
+
+.admin-datesedit > form {
+  margin-top: 8px;
+}
+
+/* Filter row above the customers table. */
+.admin-filterrow {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 8px;
+}
+
+.admin-input.filter {
+  width: 280px;
+  height: 34px;
+  font-size: 14px;
+}
+
+.admin-filter-count {
+  font-size: 13px;
+  color: #a1a1aa;
+}
+
+/* The assign disclosure row: a second <tr> per customer, visually attached to the
+   row above it (no top border, tinted) so it reads as part of that customer. */
+tr.admin-assign-row > td {
+  padding: 0 10px 8px;
+  background: #fafafa;
+}
+
+.admin-assign-body {
+  padding: 4px 0 4px;
+}
+
+.admin-assign-body .status-note,
+.admin-assign-body .admin-linkbox {
+  margin-top: 8px;
+}
+/* --- END: event tabs + assign panel (app/admin/events/[eventId]) ----------- */

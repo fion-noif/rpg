@@ -13,6 +13,10 @@ const MESSAGES: Record<string, string> = {
   'unknown-staff': 'That person no longer exists. Reload the page.',
   'unknown-worker': 'That worker is no longer on this event. Reload the page.',
   'invalid-name': 'Pick someone from the list, or type a name.',
+  // Both reachable through the customers-tab assign panel, which can fail on the customer
+  // as well as on the person.
+  'unknown-customer': 'That customer is not in the synced QuickBooks data. Run Sync and retry.',
+  'not-participating': 'That customer is not on this event. Reload the page.',
 };
 
 export function MagicLink({ state }: { state: LinkState }) {
