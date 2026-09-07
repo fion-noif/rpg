@@ -13,6 +13,7 @@
     "seed": "tsx src/scripts/seed.ts",
     "rotate": "tsx src/scripts/rotate-token.ts",
     "create-admin": "tsx src/scripts/create-admin.ts",
+    "reset-admin-password": "tsx src/scripts/reset-admin-password.ts",
     "auth": "tsx src/scripts/auth.ts",
     "sync": "tsx src/scripts/sync.ts",
     "test-invoice": "tsx src/scripts/test-invoice.ts",

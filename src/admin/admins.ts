@@ -276,6 +276,45 @@ export async function resetAdminPassword(id: number, by: AdminActor): Promise<Re
   });
 }
 
+/**
+ * Bootstrap password reset, by username and with no acting admin.
+ *
+ * The escape hatch for the one case `resetAdminPassword` above cannot serve: the account
+ * that is locked out is the *only* owner, so there is nobody left who can authorise a reset
+ * through the UI. Authorisation here is a shell and the DATABASE_URL, exactly as for
+ * `npm run create-admin` (which is the only other way out of that state, by creating a
+ * second owner). The audit row is written with a null `admin_id` — the schema keeps that
+ * column nullable precisely so a script-triggered action stays honestly unattributed rather
+ * than being credited to whoever happens to own the team.
+ *
+ * Deliberately generates the password rather than accepting one: a password passed on argv
+ * would be visible in shell history and to anyone running `ps`, which is a worse leak than
+ * the one being repaired.
+ */
+export async function resetAdminPasswordByUsername(
+  usernameInput: string
+): Promise<ResetPasswordResult> {
+  const username = normalizeUsername(usernameInput);
+  const tempPassword = generateTempPassword();
+  return withTx(async (client) => {
+    const res = await client.query<{ id: number; username: string; name: string }>(
+      `UPDATE admins SET password_hash = $2, token_version = token_version + 1
+       WHERE username = $1 RETURNING id, username, name`,
+      [username, hashPassword(tempPassword)]
+    );
+    if (res.rows.length === 0) return { ok: false as const, reason: 'unknown-admin' as const };
+    // token_version is bumped in the same statement, so any session still holding the old
+    // password's cookie is invalid the moment this commits.
+    await logAction(client, 'reset-admin-password', null, {
+      adminId: res.rows[0].id,
+      username: res.rows[0].username,
+      via: 'cli',
+    });
+    const { id, ...row } = res.rows[0];
+    return { ok: true as const, ...row, tempPassword };
+  });
+}
+
 export type ChangePasswordResult =
   | { ok: true; tokenVersion: number }
   | { ok: false; reason: 'unknown-admin' | 'wrong-current' | 'weak-password' };

@@ -15,6 +15,7 @@ import {
   hasAnyAdmin,
   listAdmins,
   resetAdminPassword,
+  resetAdminPasswordByUsername,
   setAdminActive,
 } from './admin/admins';
 import { applySchema, resetSchema, seedAdmin } from './test-helpers';
@@ -179,6 +180,45 @@ test('resetAdminPassword bumps token_version and audits under the resetting owne
   // Attributed to the owner who did it, not to the account it happened to (seedAdmin creates
   // via the CLI path, so its own create-admin row is unattributed).
   assert.deepEqual(await auditFor(mike.id), ['reset-admin-password']);
+});
+
+test('resetAdminPasswordByUsername unlocks a sole owner, unattributed', async (t) => {
+  if (!dbAvailable) return t.skip();
+  const before = await getAdmin(mike.id);
+
+  // The case the UI cannot serve: mike is the only owner, so there is no second owner to
+  // authorise a reset. Username, not id — that is what a locked-out human knows.
+  const reset = await resetAdminPasswordByUsername('  Mike  ');
+  assert.ok(reset.ok, 'the username is normalised, so case and padding are not a failure');
+  assert.equal(reset.username, 'mike');
+  assert.notEqual(reset.tempPassword, mike.password);
+
+  // The old password stops working and the new one starts, in the same commit.
+  assert.equal((await authenticateAdmin('mike', mike.password)).ok, false);
+  assert.equal((await authenticateAdmin('mike', reset.tempPassword)).ok, true);
+
+  // Bumped, so any cookie minted under the old password is dead (src/admin-auth.ts).
+  assert.equal((await getAdmin(mike.id))?.tokenVersion, before!.tokenVersion + 1);
+
+  // Audited with a null actor on purpose: a script run has no person behind it, and the
+  // schema keeps admin_id nullable rather than back-attributing it to the owner.
+  const { rows } = await pool.query(
+    `SELECT admin_id, detail FROM admin_actions WHERE action = 'reset-admin-password'`
+  );
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].admin_id, null);
+  assert.equal(rows[0].detail.via, 'cli');
+});
+
+test('resetAdminPasswordByUsername refuses an unknown username without writing', async (t) => {
+  if (!dbAvailable) return t.skip();
+  assert.deepEqual(await resetAdminPasswordByUsername('nobody'), {
+    ok: false,
+    reason: 'unknown-admin',
+  });
+  assert.equal((await getAdmin(mike.id))?.tokenVersion, 1);
+  const { rows } = await pool.query(`SELECT 1 FROM admin_actions WHERE action = 'reset-admin-password'`);
+  assert.equal(rows.length, 0);
 });
 
 test('changeOwnPassword requires the current password and enforces a length floor', async (t) => {
