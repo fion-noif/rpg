@@ -31,6 +31,9 @@ export const strings = {
     // weekend is over, and only the manager can extend it or issue a new one (M4).
     linkExpired:
       'This link has expired — the event has ended. Ask your manager if you still need access.',
+    // A signed-in worker with no assigned customers. The link is fine and there is nothing
+    // for them to fix, so this names the missing setup step rather than looking like a fault.
+    noCustomers: 'No customers assigned to you yet. Ask your manager to assign yours.',
   },
   es: {
     customer: 'Cliente',
@@ -55,6 +58,7 @@ export const strings = {
     noSession: 'Este enlace no es válido. Pide a tu gerente tu enlace personal.',
     linkExpired:
       'Este enlace ha caducado — el evento ya terminó. Pide acceso a tu gerente si aún lo necesitas.',
+    noCustomers: 'Aún no tienes clientes asignados. Pide a tu gerente que te asigne los tuyos.',
   },
 } as const;
 

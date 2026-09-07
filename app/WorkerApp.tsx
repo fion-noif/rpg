@@ -255,6 +255,11 @@ export default function WorkerApp(props: {
         </button>
       </div>
 
+      {/* A worker whose manager has not assigned them anyone yet. Without this the page is a
+          dead end: no customer bar, no tabs, no parts list, and — because there is nothing
+          queued — a cheerful "Saved ✓". Say which step is missing, and whose step it is. */}
+      {customers.length === 0 && <div className="empty">{t.noCustomers}</div>}
+
       {customers.length === 1 && customer && (
         <div className="customer-bar">
           {t.customer}: {customer.display_name}
@@ -282,7 +287,9 @@ export default function WorkerApp(props: {
           {t.pending} ({pendingCount}) — {t.offlineNote}
         </div>
       )}
-      {pendingCount === 0 && !saveError && !locked && (
+      {/* Gated on having somewhere to record: "Saved ✓" with nothing assigned reads as
+          "everything is fine", which is the opposite of what that worker needs to know. */}
+      {customers.length > 0 && pendingCount === 0 && !saveError && !locked && (
         <div className="status-note ok">{t.confirmed} ✓</div>
       )}
       {saveError && <div className="status-note error">{t.saveFailed}</div>}
