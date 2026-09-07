@@ -74,7 +74,10 @@ test('adminWorkerFor is idempotent: one staff row per admin, one worker per even
   // A second event reuses the same person, with its own participation row.
   const {
     rows: [other],
-  } = await pool.query<{ id: number }>(`INSERT INTO events (code, name) VALUES ('T2', 'Other') RETURNING id`);
+  } = await pool.query<{ id: number }>(
+    `INSERT INTO events (code, name, start_date, end_date)
+     VALUES ('T2', 'Other', CURRENT_DATE, CURRENT_DATE) RETURNING id`
+  );
   const c = await adminWorkerFor(pool, other.id, admin);
   assert.notEqual(c, a);
 

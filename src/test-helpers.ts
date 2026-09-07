@@ -84,7 +84,15 @@ export interface Fixtures {
 export async function seedFixtures(pool: pg.Pool): Promise<Fixtures> {
   const {
     rows: [event],
-  } = await pool.query<{ id: number }>(`INSERT INTO events (code, name) VALUES ('T1', 'Test Event') RETURNING id`);
+    // Dates are CURRENT_DATE, not fixed literals, because worker link expiry is derived from
+    // `end_date` (src/workers.ts): a hard-coded date would quietly expire every fixture token
+    // the day it passed, and dozens of tests here resolve one. `T1` is kept as the code even
+    // though the app now generates codes — the fixture is asserting on a known code, and
+    // going through `createEvent` would make it unpredictable.
+  } = await pool.query<{ id: number }>(
+    `INSERT INTO events (code, name, start_date, end_date)
+     VALUES ('T1', 'Test Event', CURRENT_DATE, CURRENT_DATE) RETURNING id`
+  );
 
   const customerId = 'cust-1';
   await pool.query(

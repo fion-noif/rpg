@@ -14,12 +14,17 @@ export async function POST(req: NextRequest) {
   if (!auth.ok) return auth.response;
 
   const form = await req.formData();
-  const code = form.get('code');
   const name = form.get('name');
+  const startDate = form.get('startDate');
+  const endDate = form.get('endDate');
 
+  // No `code` field any more (M4): the manager supplies the dates and a description, and the
+  // event code — which exists to be a QuickBooks DocNumber, not a label — is derived from the
+  // start date in createEvent.
   const result = await createEvent({
-    code: typeof code === 'string' ? code : '',
     name: typeof name === 'string' ? name : '',
+    startDate: typeof startDate === 'string' ? startDate : '',
+    endDate: typeof endDate === 'string' ? endDate : '',
   });
 
   // 303 turns the POST into a GET, so a refresh doesn't try to create the event again.

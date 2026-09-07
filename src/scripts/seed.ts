@@ -6,6 +6,7 @@
 // so run `npm run sync` first. Re-running updates assignments; existing workers keep their links.
 import { readFileSync } from 'node:fs';
 import { q, pool } from '../db';
+import { createEvent } from '../admin/events';
 import { config } from '../config';
 import { hashToken, newToken } from '../workers';
 
@@ -30,7 +31,7 @@ async function staffFor(name: string, language: 'en' | 'es'): Promise<number> {
 }
 
 interface SeedFile {
-  event: { code: string; name: string };
+  event: { name: string; startDate: string; endDate: string };
   workers: { name: string; language?: 'en' | 'es'; customers: string[] }[];
 }
 
@@ -41,12 +42,43 @@ if (!path) {
 }
 const seed: SeedFile = JSON.parse(readFileSync(path, 'utf8'));
 
-const [event] = await q<{ id: number }>(
-  `INSERT INTO events (code, name) VALUES ($1, $2)
-   ON CONFLICT (code) DO UPDATE SET name = $2, active = TRUE
-   RETURNING id`,
-  [seed.event.code, seed.event.name]
+/**
+ * Re-seeding stays idempotent by matching the event on `name` — the same legacy convention
+ * `staffFor` uses for people, and, like it, this script's alone: the admin app addresses
+ * events by id and never by name. A seed file used to name its event by `code`, but the code
+ * is now generated from the start date inside `createEvent` (M4), so a second run has no way
+ * to predict the one the first run minted. Name is the only handle the file still offers.
+ */
+const existingEvent = await q<{ id: number; code: string }>(
+  'SELECT id, code FROM events WHERE name = $1 ORDER BY id LIMIT 1',
+  [seed.event.name]
 );
+
+let eventId: number;
+let eventCode: string;
+if (existingEvent[0]) {
+  eventId = existingEvent[0].id;
+  eventCode = existingEvent[0].code;
+  // The code is left as first generated even when the dates move: it may already be on a
+  // posted QuickBooks invoice, and re-deriving it would orphan that invoice (§23 Rule 5).
+  //
+  // The dates go straight to Postgres unvalidated. A malformed one is a typo in a file the
+  // operator is editing by hand, and the DATE cast rejects it loudly before any worker row is
+  // touched — cheaper than duplicating `normalizeDate`, which is private to the admin module.
+  await q('UPDATE events SET start_date = $1, end_date = $2, active = TRUE WHERE id = $3', [
+    seed.event.startDate,
+    seed.event.endDate,
+    eventId,
+  ]);
+} else {
+  const created = await createEvent(seed.event);
+  if (!created.ok) {
+    console.error(`Event "${seed.event.name}" could not be created — ${created.reason}. Check the event block in ${path}.`);
+    process.exit(1);
+  }
+  eventId = created.eventId;
+  eventCode = created.code;
+}
 
 const links: string[] = [];
 for (const w of seed.workers) {
@@ -56,7 +88,7 @@ for (const w of seed.workers) {
   // One worker row per (event, name); keep the existing token if re-seeding.
   const existing = await q<{ id: number }>(
     'SELECT id FROM workers WHERE event_id = $1 AND name = $2',
-    [event.id, w.name]
+    [eventId, w.name]
   );
   let workerId: number;
   let link: string;
@@ -68,7 +100,7 @@ for (const w of seed.workers) {
     const token = newToken();
     const [row] = await q<{ id: number }>(
       'INSERT INTO workers (event_id, staff_id, name, language, token_hash) VALUES ($1, $2, $3, $4, $5) RETURNING id',
-      [event.id, staffId, w.name, language, hashToken(token)]
+      [eventId, staffId, w.name, language, hashToken(token)]
     );
     workerId = row.id;
     link = `${config.appBaseUrl}/login/${token}`;
@@ -87,7 +119,7 @@ for (const w of seed.workers) {
     // Assigning a worker implies the customer participates in the event (design doc §21).
     await q(
       'INSERT INTO event_customers (event_id, customer_qbo_id) VALUES ($1, $2) ON CONFLICT DO NOTHING',
-      [event.id, customer.qbo_id]
+      [eventId, customer.qbo_id]
     );
     await q('INSERT INTO assignments (worker_id, customer_qbo_id) VALUES ($1, $2) ON CONFLICT DO NOTHING', [
       workerId,
@@ -97,7 +129,10 @@ for (const w of seed.workers) {
   links.push(`${w.name.padEnd(16)} ${w.customers.join(', ').padEnd(40)} ${link}`);
 }
 
-console.log(`\nEvent: ${seed.event.name} (${seed.event.code})\n`);
+// The code is printed because it is generated, not chosen: this line is the only place the
+// operator learns which one their weekend ended up with, and it is what will appear on the
+// QuickBooks invoices.
+console.log(`\nEvent: ${seed.event.name} (${eventCode}) — ${seed.event.startDate} to ${seed.event.endDate}\n`);
 console.log('Worker           Customers                                Login link');
 console.log('-'.repeat(110));
 for (const l of links) console.log(l);

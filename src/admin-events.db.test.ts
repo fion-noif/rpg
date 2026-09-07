@@ -23,7 +23,9 @@ import {
   removeWorkerFromEvent,
   rotateWorkerToken,
   unassign,
+  updateEventDates,
 } from './admin/events';
+import { docNumberFor } from './charges';
 
 let dbAvailable = true;
 let fx: Fixtures;
@@ -61,56 +63,167 @@ function tokenOf(link: string): string {
   return token;
 }
 
-async function freshEvent(code = 'R8', name = 'Round 8'): Promise<number> {
-  const created = await createEvent({ code, name });
+/**
+ * A weekend that is running *now*, so the worker links it mints resolve (link expiry is
+ * derived from `end_date` — see src/workers.db.test.ts). Tests that care about a specific
+ * code assert on the value `createEvent` returns rather than predicting it.
+ */
+function today(offsetDays = 0): string {
+  const d = new Date();
+  d.setUTCDate(d.getUTCDate() + offsetDays);
+  return d.toISOString().slice(0, 10);
+}
+
+async function freshEvent(name = 'Round 8'): Promise<number> {
+  const created = await createEvent({ name, startDate: today(), endDate: today(1) });
   assert.equal(created.ok, true);
   return created.ok ? created.eventId : 0;
+}
+
+/** For the few assertions about a code: read the generated one instead of predicting it. */
+async function codeOf(eventId: number): Promise<string> {
+  const res = await pool.query<{ code: string }>('SELECT code FROM events WHERE id = $1', [eventId]);
+  return res.rows[0].code;
 }
 
 // ---------------------------------------------------------------------------
 // Events
 // ---------------------------------------------------------------------------
 
-test('createEvent accepts a valid code, uppercasing it, and rejects a duplicate', async (t) => {
+test('createEvent derives the code from the start date and stores the dates', async (t) => {
   if (!dbAvailable) return t.skip();
-  const first = await createEvent({ code: 'r8', name: 'Round 8' });
-  assert.equal(first.ok, true);
-
-  const stored = await pool.query('SELECT code, name, active, closed_at FROM events WHERE id = $1', [
-    first.ok ? first.eventId : 0,
-  ]);
-  assert.equal(stored.rows[0].code, 'R8');
-  assert.equal(stored.rows[0].active, true);
-  assert.equal(stored.rows[0].closed_at, null);
-
-  // Same code again, and the same code in the other case — both are the one event.
-  assert.deepEqual(await createEvent({ code: 'R8', name: 'Round 8 again' }), {
-    ok: false,
-    reason: 'duplicate-code',
+  const created = await createEvent({
+    name: 'Round 8 — Laguna Seca',
+    startDate: '2026-09-04',
+    endDate: '2026-09-06',
   });
-  assert.deepEqual(await createEvent({ code: 'r8', name: 'Round 8 again' }), {
-    ok: false,
-    reason: 'duplicate-code',
+  assert.equal(created.ok, true);
+  if (!created.ok) return;
+  assert.equal(created.code, '260904');
+
+  const stored = await pool.query(
+    `SELECT code, name, active, closed_at, to_char(start_date, 'YYYY-MM-DD') AS start_date,
+            to_char(end_date, 'YYYY-MM-DD') AS end_date
+     FROM events WHERE id = $1`,
+    [created.eventId]
+  );
+  assert.deepEqual(stored.rows[0], {
+    code: '260904',
+    name: 'Round 8 — Laguna Seca',
+    active: true,
+    closed_at: null,
+    start_date: '2026-09-04',
+    end_date: '2026-09-06',
   });
-  // The rejected attempts left nothing behind and did not rename the original.
-  const count = await pool.query(`SELECT count(*) FROM events WHERE code = 'R8'`);
-  assert.equal(count.rows[0].count, '1');
 });
 
-test('createEvent rejects codes the DocNumber budget cannot carry, before touching the DB', async (t) => {
+test('a generated code always fits the QuickBooks DocNumber budget', async (t) => {
   if (!dbAvailable) return t.skip();
-  for (const code of ['', '   ', 'TOOLONGCODE', 'R8!', 'R 8', 'r-8']) {
+  const created = await createEvent({ name: 'Budget', startDate: '2026-12-31', endDate: '2026-12-31' });
+  assert.equal(created.ok, true);
+  if (!created.ok) return;
+  // The whole point of deriving the code: 6 digits leaves slack the old hand-typed 8-char
+  // ceiling spent. The worst legal customer id in src/charges.test.ts is 9 digits.
+  assert.ok(docNumberFor(created.code, '123456789').length <= 21);
+});
+
+test('two events starting the same day get suffixed codes, not a collision', async (t) => {
+  if (!dbAvailable) return t.skip();
+  const first = await createEvent({ name: 'Paddock A', startDate: '2026-09-04', endDate: '2026-09-06' });
+  const second = await createEvent({ name: 'Paddock B', startDate: '2026-09-04', endDate: '2026-09-06' });
+  const third = await createEvent({ name: 'Paddock C', startDate: '2026-09-04', endDate: '2026-09-06' });
+  assert.equal(first.ok && first.code, '260904');
+  assert.equal(second.ok && second.code, '260904B');
+  assert.equal(third.ok && third.code, '260904C');
+
+  // Three distinct events, not one renamed three times.
+  const count = await pool.query(`SELECT count(*) FROM events WHERE code LIKE '260904%'`);
+  assert.equal(count.rows[0].count, '3');
+});
+
+test('createEvent rejects unusable dates and names before touching the DB', async (t) => {
+  if (!dbAvailable) return t.skip();
+  const cases: [string, string][] = [
+    ['', '2026-09-06'],
+    ['2026-09-04', ''],
+    ['not-a-date', '2026-09-06'],
+    ['2026-9-4', '2026-09-06'], // unpadded — the browser never sends this, a seed file might
+    ['2026-02-31', '2026-03-01'], // passes the regex, is not a day
+    ['2026-09-06', '2026-09-04'], // ends before it starts
+  ];
+  for (const [startDate, endDate] of cases) {
     assert.deepEqual(
-      await createEvent({ code, name: 'Nope' }),
-      { ok: false, reason: 'invalid-code' },
-      `expected reject: ${JSON.stringify(code)}`
+      await createEvent({ name: 'Nope', startDate, endDate }),
+      { ok: false, reason: 'invalid-dates' },
+      `expected reject: ${startDate} → ${endDate}`
     );
   }
-  assert.deepEqual(await createEvent({ code: 'R9', name: '   ' }), { ok: false, reason: 'invalid-name' });
+  assert.deepEqual(
+    await createEvent({ name: '   ', startDate: '2026-09-04', endDate: '2026-09-06' }),
+    { ok: false, reason: 'invalid-name' }
+  );
 
-  // The DB CHECK is the backstop, but nothing should have reached it.
+  // The DB CHECK and the NOT NULLs are backstops, but nothing should have reached them.
   const count = await pool.query('SELECT count(*) FROM events');
   assert.equal(count.rows[0].count, '1'); // just the fixture event
+});
+
+test('a single-day event is legal', async (t) => {
+  if (!dbAvailable) return t.skip();
+  const created = await createEvent({ name: 'Test day', startDate: '2026-09-04', endDate: '2026-09-04' });
+  assert.equal(created.ok, true);
+});
+
+test('updateEventDates moves the dates, logs both sides, and never touches the code', async (t) => {
+  if (!dbAvailable) return t.skip();
+  const created = await createEvent({ name: 'Ran long', startDate: '2026-09-04', endDate: '2026-09-06' });
+  assert.equal(created.ok, true);
+  if (!created.ok) return;
+
+  // The weekend overran: Sunday became Monday.
+  assert.deepEqual(
+    await updateEventDates(created.eventId, { startDate: '2026-09-04', endDate: '2026-09-07' }, admin),
+    { ok: true }
+  );
+
+  const stored = await pool.query(
+    `SELECT code, to_char(end_date, 'YYYY-MM-DD') AS end_date FROM events WHERE id = $1`,
+    [created.eventId]
+  );
+  assert.equal(stored.rows[0].end_date, '2026-09-07');
+  // Still 260904, not re-derived: by now it may be printed on a posted invoice (§23 Rule 5).
+  assert.equal(stored.rows[0].code, '260904');
+
+  const logged = await pool.query(
+    `SELECT detail FROM admin_actions WHERE action = 'edit-event-dates' AND event_id = $1`,
+    [created.eventId]
+  );
+  assert.equal(logged.rows.length, 1);
+  assert.equal(logged.rows[0].detail.from.endDate, '2026-09-06');
+  assert.equal(logged.rows[0].detail.to.endDate, '2026-09-07');
+  assert.equal(logged.rows[0].detail.by, admin.name);
+});
+
+test('updateEventDates refuses bad dates, unknown events, and closed events', async (t) => {
+  if (!dbAvailable) return t.skip();
+  const eventId = await freshEvent();
+
+  assert.deepEqual(
+    await updateEventDates(eventId, { startDate: '2026-09-06', endDate: '2026-09-04' }, admin),
+    { ok: false, reason: 'invalid-dates' }
+  );
+  assert.deepEqual(
+    await updateEventDates(999_999, { startDate: '2026-09-04', endDate: '2026-09-06' }, admin),
+    { ok: false, reason: 'unknown-event' }
+  );
+
+  // Closed is settled history: the tokens are already destroyed, so moving the dates could
+  // not restore access and would only make the audit log describe something that never ran.
+  assert.equal((await closeEvent(eventId, admin, { force: true })).ok, true);
+  assert.deepEqual(
+    await updateEventDates(eventId, { startDate: '2026-09-04', endDate: '2026-09-06' }, admin),
+    { ok: false, reason: 'event-closed' }
+  );
 });
 
 test('listEvents summarises participation and batch status per event', async (t) => {
@@ -121,7 +234,7 @@ test('listEvents summarises participation and batch status per event', async (t)
   assert.equal(added.ok, true);
 
   const events = await listEvents();
-  const r8 = events.find((e) => e.code === 'R8');
+  const r8 = events.find((e) => e.id === eventId);
   assert.ok(r8);
   assert.equal(r8.customerCount, 1);
   assert.equal(r8.workerCount, 1);
@@ -220,7 +333,7 @@ test('addWorkerToEvent creates the person, returns a working link, and is idempo
   assert.equal(session.id, added.workerId);
   assert.equal(session.staff_id, added.staffId);
   assert.equal(session.language, 'es');
-  assert.equal(session.event_code, 'R8');
+  assert.equal(session.event_code, await codeOf(eventId));
 
   // Only the hash is stored — the plaintext exists nowhere in the database.
   const stored = await pool.query('SELECT token_hash FROM workers WHERE id = $1', [added.workerId]);
@@ -468,7 +581,7 @@ test('listStaff carries the last event worked, and never offers the synthetic ma
   const nia = staff.find((s) => s.id === added.staffId);
   assert.ok(nia);
   assert.equal(nia.eventCount, 1);
-  assert.equal(nia.lastEventCode, 'R8');
+  assert.equal(nia.lastEventCode, await codeOf(eventId));
   assert.notEqual(nia.lastEventAt, null);
 
   // Names are not deduplicated: §23 Rule 1 forbids identity-by-name.

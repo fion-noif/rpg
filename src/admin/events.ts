@@ -75,35 +75,156 @@ async function logAction(client: pg.PoolClient, entry: ActionLog): Promise<void>
 // Events
 // ---------------------------------------------------------------------------
 
-export type CreateEventResult =
-  | { ok: true; eventId: number }
-  | { ok: false; reason: 'invalid-code' | 'invalid-name' | 'duplicate-code' };
+/** `YYYY-MM-DD`, the shape both a browser date input and a seed file produce. */
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 /**
- * Codes are uppercased for the manager (typing `r8` is not an error worth reporting) but
- * otherwise validated strictly. A duplicate is a normal outcome — the manager forgot the
- * event already exists — so it comes back as a reason, not a Postgres unique violation.
+ * Dates are kept as `YYYY-MM-DD` strings end to end rather than being parsed into `Date`s:
+ * an event date is a calendar day at a racetrack, not an instant, and round-tripping it
+ * through a JS `Date` is how a Sunday event silently becomes a Saturday one. The format also
+ * sorts lexicographically, so `endDate < startDate` below is a real chronological test.
+ *
+ * The regex admits impossible days (`2026-02-31`), so the calendar is checked too.
  */
-export async function createEvent(input: { code: string; name: string }): Promise<CreateEventResult> {
-  const code = typeof input.code === 'string' ? input.code.trim().toUpperCase() : '';
-  if (!EVENT_CODE_RE.test(code)) return { ok: false, reason: 'invalid-code' };
+function normalizeDate(input: unknown): string | undefined {
+  if (typeof input !== 'string') return undefined;
+  const value = input.trim();
+  if (!DATE_RE.test(value)) return undefined;
+  const [y, m, d] = value.split('-').map(Number);
+  const probe = new Date(Date.UTC(y, m - 1, d));
+  if (probe.getUTCFullYear() !== y || probe.getUTCMonth() !== m - 1 || probe.getUTCDate() !== d) {
+    return undefined;
+  }
+  return value;
+}
+
+/**
+ * The codes a given start date may take, in preference order: `YYMMDD`, then `YYMMDDB`
+ * through `YYMMDDZ`.
+ *
+ * Date-derived rather than sequential because the code's real audience is Mike's bookkeeper,
+ * who meets it as `RW-260906-58` on a QuickBooks invoice and can place that weekend without
+ * looking anything up. Six digits also leaves the 21-character DocNumber budget slack that
+ * the old hand-typed 8-character ceiling spent (`docNumberFor`, src/charges.ts): the worst
+ * case here is `RW-260906B-123456789`, 20 characters.
+ *
+ * The suffix exists because two events can legitimately start on the same day, so generation
+ * has to survive a collision rather than assume uniqueness.
+ */
+function* candidateCodes(startDate: string): Generator<string> {
+  const base = startDate.slice(2).replace(/-/g, ''); // 2026-09-06 -> 260906
+  yield base;
+  for (let i = 0; i < 25; i++) yield base + String.fromCharCode('B'.charCodeAt(0) + i);
+}
+
+export type CreateEventResult =
+  | { ok: true; eventId: number; code: string }
+  | { ok: false; reason: 'invalid-name' | 'invalid-dates' | 'code-exhausted' };
+
+/**
+ * Creates a weekend from what the manager actually knows: when it runs and what to call it.
+ *
+ * The code is generated, never typed (M4) — see `candidateCodes` for the shape and
+ * db/schema.sql's M4 note for why the column survives at all. A collision on the same start
+ * date walks to the next suffix, which is why this loops instead of inserting once;
+ * `code-exhausted` means 26 events share one start date and is a refusal rather than a
+ * silently wrong code, because a wrong code is a wrong QuickBooks invoice.
+ */
+export async function createEvent(input: {
+  name: string;
+  startDate: string;
+  endDate: string;
+}): Promise<CreateEventResult> {
   const name = normalizeName(input.name);
   if (!name) return { ok: false, reason: 'invalid-name' };
+  const startDate = normalizeDate(input.startDate);
+  const endDate = normalizeDate(input.endDate);
+  if (!startDate || !endDate || endDate < startDate) return { ok: false, reason: 'invalid-dates' };
 
-  const res = await pool.query<{ id: number }>(
-    `INSERT INTO events (code, name) VALUES ($1, $2)
-     ON CONFLICT (code) DO NOTHING
-     RETURNING id`,
-    [code, name]
-  );
-  if (res.rows.length === 0) return { ok: false, reason: 'duplicate-code' };
-  return { ok: true, eventId: res.rows[0].id };
+  for (const code of candidateCodes(startDate)) {
+    // Belt and braces on the generator, not on the manager: this string becomes a QBO query
+    // literal, so a bug that produced an unescapable code must die here rather than at Intuit.
+    if (!EVENT_CODE_RE.test(code)) {
+      throw new Error(`Generated an unusable event code: ${JSON.stringify(code)}`);
+    }
+    const res = await pool.query<{ id: number }>(
+      `INSERT INTO events (code, name, start_date, end_date) VALUES ($1, $2, $3, $4)
+       ON CONFLICT (code) DO NOTHING
+       RETURNING id`,
+      [code, name, startDate, endDate]
+    );
+    if (res.rows.length > 0) return { ok: true, eventId: res.rows[0].id, code };
+  }
+  return { ok: false, reason: 'code-exhausted' };
+}
+
+export type UpdateEventDatesResult =
+  | { ok: true }
+  | { ok: false; reason: 'unknown-event' | 'event-closed' | 'invalid-dates' };
+
+/**
+ * Moves a weekend's dates — the recovery path for a weekend that ran long.
+ *
+ * This exists because worker link expiry is derived from `end_date` (src/workers.ts): with no
+ * way to edit the date, a Sunday that turned into a Monday would lock every worker out with
+ * *no* remedy, since rotating a link re-derives the same dead expiry. Editing the end date is
+ * the only lever that actually revives access, which is what makes this a peer of the expiry
+ * check rather than a nice-to-have.
+ *
+ * `code` is deliberately left alone even though it was derived from `start_date`: it may
+ * already be on a posted QuickBooks invoice, and re-deriving it would orphan that invoice
+ * from its event (§23 Rule 5). The code records where the numbering came from, not what the
+ * dates currently are.
+ */
+export async function updateEventDates(
+  eventId: number,
+  input: { startDate: string; endDate: string },
+  admin: AdminActor
+): Promise<UpdateEventDatesResult> {
+  const startDate = normalizeDate(input.startDate);
+  const endDate = normalizeDate(input.endDate);
+  if (!startDate || !endDate || endDate < startDate) {
+    return { ok: false, reason: 'invalid-dates' };
+  }
+
+  return withTx(async (client) => {
+    const event = await lockEvent(client, eventId);
+    if (!event) return { ok: false as const, reason: 'unknown-event' as const };
+    // A closed event is settled history: its tokens are already destroyed, so moving its
+    // dates could not restore access and would only rewrite what the audit log describes.
+    if (event.closed_at) return { ok: false as const, reason: 'event-closed' as const };
+
+    await client.query('UPDATE events SET start_date = $1, end_date = $2 WHERE id = $3', [
+      startDate,
+      endDate,
+      eventId,
+    ]);
+    await logAction(client, {
+      action: 'edit-event-dates',
+      admin,
+      eventId,
+      // Both sides recorded: this action silently changes when every worker's link dies, so
+      // "who extended the weekend, and from what" has to be answerable later (§23 Rule 4).
+      detail: {
+        from: { startDate: event.start_date, endDate: event.end_date },
+        to: { startDate, endDate },
+      },
+    });
+    return { ok: true as const };
+  });
 }
 
 export interface EventSummary {
   id: number;
   code: string;
   name: string;
+  /**
+   * `YYYY-MM-DD`. Read with `to_char` rather than as a DATE on purpose: node-pg hands a DATE
+   * back as a JS `Date` at local midnight, which renders as the previous day for anyone west
+   * of UTC — the exact off-by-one `normalizeDate` exists to avoid on the way in.
+   */
+  start_date: string;
+  end_date: string;
   active: boolean;
   closed_at: string | null;
   created_at: string;
@@ -121,6 +242,8 @@ export async function listEvents(): Promise<EventSummary[]> {
   return (
     await pool.query<EventSummary>(
       `SELECT e.id, e.code, e.name, e.active, e.closed_at, e.created_at,
+              to_char(e.start_date, 'YYYY-MM-DD') AS start_date,
+              to_char(e.end_date, 'YYYY-MM-DD') AS end_date,
               (SELECT count(*)::int FROM event_customers ec WHERE ec.event_id = e.id)
                 AS "customerCount",
               (SELECT count(*)::int FROM workers w WHERE w.event_id = e.id AND NOT w.is_admin)
@@ -146,6 +269,9 @@ export interface EventDetail {
   id: number;
   code: string;
   name: string;
+  /** `YYYY-MM-DD` — see the note on `EventSummary.start_date`. */
+  start_date: string;
+  end_date: string;
   active: boolean;
   closed_at: string | null;
   created_at: string;
@@ -153,7 +279,10 @@ export interface EventDetail {
 
 export async function getEvent(eventId: number): Promise<EventDetail | undefined> {
   const res = await pool.query<EventDetail>(
-    'SELECT id, code, name, active, closed_at, created_at FROM events WHERE id = $1',
+    `SELECT id, code, name, active, closed_at, created_at,
+            to_char(start_date, 'YYYY-MM-DD') AS start_date,
+            to_char(end_date, 'YYYY-MM-DD') AS end_date
+     FROM events WHERE id = $1`,
     [eventId]
   );
   return res.rows[0];
@@ -648,12 +777,19 @@ export async function closeEvent(
  * Row lock on the event, so a concurrent close can't slip between a mutation's guard and
  * its write (add-worker racing close would otherwise mint a link the close never revokes).
  */
-async function lockEvent(
-  client: pg.PoolClient,
-  eventId: number
-): Promise<{ id: number; closed_at: string | null } | undefined> {
-  const res = await client.query<{ id: number; closed_at: string | null }>(
-    'SELECT id, closed_at FROM events WHERE id = $1 FOR UPDATE',
+interface LockedEvent {
+  id: number;
+  closed_at: string | null;
+  /** Carried so `updateEventDates` can log what the dates were before it changed them. */
+  start_date: string;
+  end_date: string;
+}
+
+async function lockEvent(client: pg.PoolClient, eventId: number): Promise<LockedEvent | undefined> {
+  const res = await client.query<LockedEvent>(
+    `SELECT id, closed_at, to_char(start_date, 'YYYY-MM-DD') AS start_date,
+            to_char(end_date, 'YYYY-MM-DD') AS end_date
+     FROM events WHERE id = $1 FOR UPDATE`,
     [eventId]
   );
   return res.rows[0];

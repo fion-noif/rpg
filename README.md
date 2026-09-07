@@ -44,8 +44,11 @@ username and password (see *Admin accounts*), then:
 
 1. **Sync** master data — the *Sync from QuickBooks* button on `/admin` pulls
    Customers and Items. (`npm run sync` still works.)
-2. **Create the event** on `/admin`: a code (`^[A-Z0-9]{1,8}$`, e.g. `R8`) and a
-   name. Its detail page is the setup screen.
+2. **Create the event** on `/admin`: start and end dates plus a short description.
+   Its detail page is the setup screen, where the dates can still be changed.
+   The event *code* (`260904`) is generated from the start date — it exists to be
+   the QuickBooks DocNumber (`RW-260904-58`) the bookkeeper reconciles against,
+   not a label, so it is never typed and never changes once minted.
 3. **Pick the customers being billed** from the synced QuickBooks customers.
    A customer must participate before anyone can record parts against them.
 4. **Add workers** — reuse a person from a past event or type a new name. Each
@@ -85,7 +88,8 @@ username and password (see *Admin accounts*), then:
 `curl "$APP_BASE_URL/api/admin/export?secret=$ADMIN_SECRET"`.
 
 **CLI alternative to steps 2–4:** copy `seed.example.json`, edit (customer names
-must exactly match QuickBooks display names), then `npm run seed -- myevent.json`.
+must exactly match QuickBooks display names; set `startDate`/`endDate` to the
+weekend you are seeding), then `npm run seed -- myevent.json`.
 It prints one magic link per worker. Re-running updates assignments and keeps
 existing links. `npm run rotate` re-issues a single worker's link.
 
@@ -296,7 +300,7 @@ reconcile exactly.
   slip in after the aggregate is snapshotted. The posted aggregate is stored in
   `charge_batch_lines` — QuickBooks invoices are bookkeeper-mutable, so amounts
   are never recomputed from usage after the fact (§23 Rule 4).
-- The database currently contains smoke-test data (event `R7`, customers
+- The database currently contains smoke-test data (a Round 7 event, customers
   `101–104`, items `201–204`). To wipe operational data before real use:
   `docker exec -i rpg-db-1 psql -U racing racing -c
   "TRUNCATE submissions, assignments, workers, staff, events, event_customers, charge_batch_lines, admin_actions, items, customers CASCADE;"`

@@ -12,9 +12,11 @@ export const dynamic = 'force-dynamic';
 
 /** `?error=<reason>` from the create-event route — enum-ish reasons, never user input. */
 const ERRORS: Record<string, string> = {
-  'invalid-code': 'Event codes are 1–8 characters, letters and digits only (e.g. R8, SPRING26).',
-  'invalid-name': 'Give the event a name.',
-  'duplicate-code': 'An event with that code already exists — open it below.',
+  'invalid-name': 'Describe the event in a few words.',
+  'invalid-dates': 'Give a start and end date, with the end on or after the start.',
+  // 26 events sharing one start date. Practically unreachable, but a refusal beats a wrong
+  // code, because the code becomes a QuickBooks invoice number (src/admin/events.ts).
+  'code-exhausted': 'Too many events already start on that date — pick a different start date.',
   // Where a manager lands if they try /admin/admins directly.
   'owner-only': 'Only the owner can manage accounts.',
 };
@@ -62,6 +64,7 @@ export default async function AdminHomePage({
           <tr>
             <th>Code</th>
             <th>Event</th>
+            <th>Dates</th>
             <th>Status</th>
             <th className="num">Customers</th>
             <th className="num">Workers</th>
@@ -75,6 +78,12 @@ export default async function AdminHomePage({
                 <a href={`/admin/events/${e.id}`}>{e.code}</a>
               </td>
               <td>{e.name}</td>
+              {/* Rendered as the stored strings, not through toLocaleDateString: these are
+                  calendar days, and formatting them through a Date would re-introduce the
+                  timezone shift `to_char` in listEvents exists to prevent. */}
+              <td className="mono">
+                {e.start_date === e.end_date ? e.start_date : `${e.start_date} → ${e.end_date}`}
+              </td>
               <td>
                 {e.closed_at ? (
                   <span className="admin-badge closed">Closed</span>
@@ -104,7 +113,7 @@ export default async function AdminHomePage({
           ))}
           {events.length === 0 && (
             <tr>
-              <td className="empty-cell" colSpan={6}>
+              <td className="empty-cell" colSpan={7}>
                 No events yet — create the first one below.
               </td>
             </tr>
@@ -113,27 +122,25 @@ export default async function AdminHomePage({
       </table>
 
       <h2 className="admin-h2">New event</h2>
+      {/* No code field (M4): a manager knows when the weekend runs and what to call it, not
+          what a QuickBooks DocNumber needs. The code is derived from the start date and
+          shown in the table above once it exists. */}
       <form className="admin-card admin-inline" method="post" action="/api/admin/events">
         <div>
-          <label className="admin-field" htmlFor="code">
-            Code
+          <label className="admin-field" htmlFor="startDate">
+            Starts
           </label>
-          <input
-            className="admin-input narrow mono"
-            id="code"
-            name="code"
-            // Mirrors EVENT_CODE_RE in src/admin/events.ts and the CHECK in db/schema.sql:
-            // the code becomes part of a 21-character QuickBooks DocNumber.
-            pattern="[A-Za-z0-9]{1,8}"
-            maxLength={8}
-            placeholder="R8"
-            autoComplete="off"
-            required
-          />
+          <input className="admin-input narrow" id="startDate" name="startDate" type="date" required />
+        </div>
+        <div>
+          <label className="admin-field" htmlFor="endDate">
+            Ends
+          </label>
+          <input className="admin-input narrow" id="endDate" name="endDate" type="date" required />
         </div>
         <div className="admin-grow">
           <label className="admin-field" htmlFor="name">
-            Name
+            Description
           </label>
           <input
             className="admin-input"

@@ -50,7 +50,11 @@ console.log(`Acting as: ${owner.name}`);
 
 // --- Fixture: a TEST event with this customer participating and one part recorded. --------
 const [event] = await q<{ id: number }>(
-  `INSERT INTO events (code, name) VALUES ($1, 'Connectivity test event')
+  // Dates are today's: this fixture event exists only to carry a QBO connectivity probe, but
+  // it still has to satisfy the NOT NULL dates, and re-running the probe should not leave
+  // behind an event whose worker links are already expired.
+  `INSERT INTO events (code, name, start_date, end_date)
+   VALUES ($1, 'Connectivity test event', CURRENT_DATE, CURRENT_DATE)
    ON CONFLICT (code) DO UPDATE SET name = events.name
    RETURNING id`,
   [EVENT_CODE]

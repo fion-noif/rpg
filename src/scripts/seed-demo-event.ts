@@ -24,7 +24,33 @@ import { query as qboQuery, QboError } from '../qbo/client';
 
 const reset = process.argv.slice(2).includes('--reset');
 
-const EVENT = { code: 'RD7', name: '2026 US Karting Championship - Round 7' };
+/** `YYYY-MM-DD`, the shape `createEvent` takes. UTC so the string never shifts a day. */
+function daysFromToday(offset: number): string {
+  const d = new Date();
+  d.setUTCDate(d.getUTCDate() + offset);
+  return d.toISOString().slice(0, 10);
+}
+
+/**
+ * The weekend, as a manager would enter it. No `code`: it is derived from `startDate` inside
+ * `createEvent` (M4), so this script cannot state one up front — and because a second run
+ * would derive a *different* suffix, `name` is the key everything below re-finds the event by.
+ * That works only because this seeder owns the name and no human ever types it.
+ *
+ * "(demo)" is load-bearing for the same reason: seed.example.json describes the same weekend,
+ * and now that the event is re-found by name rather than by a distinct code, an identical
+ * name would make `npm run seed` silently adopt this demo event instead of building its own.
+ */
+const EVENT = {
+  name: '2026 US Karting Championship - Round 7 (demo)',
+  // Relative to today, not fixed literals. Worker link expiry is derived from `end_date`
+  // (src/workers.ts), so a hard-coded weekend would make every login link this script prints
+  // dead on arrival the moment that weekend passed — which is exactly when someone reaches
+  // for a demo. A Friday-to-Sunday shape is preserved by ending today and starting two days
+  // back.
+  startDate: daysFromToday(-2),
+  endDate: daysFromToday(0),
+};
 
 /**
  * Every action is attributed to the owner. `admin_id` 1 is Mike Rolison, the bootstrap owner
@@ -115,9 +141,12 @@ const POST_FAILED_CUSTOMER = 'Nitro Kart Team';
  * QuickBooks' data, which this app does not own (§3) and cannot recreate without a sync.
  */
 async function resetEvent(): Promise<void> {
-  const [event] = await q<{ id: number }>('SELECT id FROM events WHERE code = $1', [EVENT.code]);
+  const [event] = await q<{ id: number; code: string }>(
+    'SELECT id, code FROM events WHERE name = $1 ORDER BY id LIMIT 1',
+    [EVENT.name]
+  );
   if (!event) {
-    console.log(`No existing event ${EVENT.code} to reset.`);
+    console.log(`No existing event "${EVENT.name}" to reset.`);
     return;
   }
   const client = await pool.connect();
@@ -148,7 +177,7 @@ async function resetEvent(): Promise<void> {
     );
     await client.query('DELETE FROM events WHERE id = $1', [event.id]);
     await client.query('COMMIT');
-    console.log(`Reset event ${EVENT.code}: removed its workers, tabs, batches and ${staff.rowCount} orphaned staff row(s).`);
+    console.log(`Reset event ${event.code}: removed its workers, tabs, batches and ${staff.rowCount} orphaned staff row(s).`);
   } catch (err) {
     await client.query('ROLLBACK');
     throw err;
@@ -193,17 +222,27 @@ try {
   }
 
   // --- Event --------------------------------------------------------------
-  const created = await createEvent(EVENT);
+  // Adoption is now decided *before* calling `createEvent` rather than by catching a
+  // duplicate afterwards: `createEvent` no longer refuses a repeat, it walks to the next
+  // suffix for the same start date (§23 Rule 5 keeps a minted code attached to its invoices),
+  // so a blind second call would quietly produce a second Round 7 rather than re-find the
+  // first one.
+  const [adopted] = await q<{ id: number; code: string }>(
+    'SELECT id, code FROM events WHERE name = $1 ORDER BY id LIMIT 1',
+    [EVENT.name]
+  );
   let eventId: number;
-  if (created.ok) {
-    eventId = created.eventId;
-    console.log(`Created event ${EVENT.code} — ${EVENT.name} (id ${eventId}).`);
-  } else if (created.reason === 'duplicate-code') {
-    const [row] = await q<{ id: number }>('SELECT id FROM events WHERE code = $1', [EVENT.code]);
-    eventId = row.id;
-    console.log(`Adopted existing event ${EVENT.code} (id ${eventId}). Pass --reset to rebuild it.`);
+  let eventCode: string;
+  if (adopted) {
+    eventId = adopted.id;
+    eventCode = adopted.code;
+    console.log(`Adopted existing event ${eventCode} (id ${eventId}). Pass --reset to rebuild it.`);
   } else {
-    fail(`Could not create event ${EVENT.code}: ${created.reason}`);
+    const created = await createEvent(EVENT);
+    if (!created.ok) fail(`Could not create event "${EVENT.name}": ${created.reason}`);
+    eventId = created.eventId;
+    eventCode = created.code;
+    console.log(`Created event ${eventCode} — ${EVENT.name} (id ${eventId}).`);
   }
 
   // --- Participation (§21: before any worker or any usage) ----------------
@@ -316,7 +355,7 @@ try {
 
   // --- The links ----------------------------------------------------------
   console.log('');
-  console.log(`Event: ${EVENT.name} (${EVENT.code})`);
+  console.log(`Event: ${EVENT.name} (${eventCode}) — ${EVENT.startDate} to ${EVENT.endDate}`);
   console.log('');
   console.log(`${'Worker'.padEnd(18)}${'Lang'.padEnd(6)}${'Customers'.padEnd(46)}Login link`);
   console.log('-'.repeat(150));

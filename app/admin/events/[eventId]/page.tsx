@@ -20,6 +20,7 @@ import {
   removeCustomerAction,
   removeWorkerAction,
   unassignAction,
+  updateEventDatesAction,
 } from './actions';
 import { AddWorkerForm } from './AddWorkerForm';
 import { RotateLinkButton } from './RotateLinkButton';
@@ -38,6 +39,7 @@ const ERRORS: Record<string, string> = {
   'already-closed': 'This event was already closed.',
   'invalid-name': 'Pick someone from the list, or type a name.',
   'unposted-customers': 'Some customers have not been posted to QuickBooks yet — see below.',
+  'invalid-dates': 'Give a start and end date, with the end on or after the start.',
 };
 
 const BATCH_LABEL: Record<string, string> = {
@@ -100,6 +102,56 @@ export default async function EventDetailPage({
           This event is closed: every worker link was destroyed and no further changes are
           possible. History below is read-only.
         </p>
+      )}
+
+      {/* ---------------------------------------------------------------- */}
+      {/* Dates are editable while the event is open because they set when every worker's
+          link stops working (end date + one day). A weekend that runs long is fixed here —
+          rotating a link cannot do it, since a new token inherits the same expiry. */}
+      <h2 className="admin-h2">Dates</h2>
+      {closed ? (
+        <p className="admin-note">
+          Ran {event.start_date} → {event.end_date}.
+        </p>
+      ) : (
+        <form className="admin-card admin-inline" action={updateEventDatesAction}>
+          <input type="hidden" name="eventId" value={event.id} />
+          <div>
+            <label className="admin-field" htmlFor="startDate">
+              Starts
+            </label>
+            <input
+              className="admin-input narrow"
+              id="startDate"
+              name="startDate"
+              type="date"
+              defaultValue={event.start_date}
+              required
+            />
+          </div>
+          <div>
+            <label className="admin-field" htmlFor="endDate">
+              Ends
+            </label>
+            <input
+              className="admin-input narrow"
+              id="endDate"
+              name="endDate"
+              type="date"
+              defaultValue={event.end_date}
+              required
+            />
+          </div>
+          <div className="admin-grow">
+            <p className="admin-muted">
+              Worker links stop working at the end of the day after the event ends. Push the
+              end date back to keep them alive; the event code never changes.
+            </p>
+          </div>
+          <button className="admin-btn secondary" type="submit">
+            Save dates
+          </button>
+        </form>
       )}
 
       {/* ---------------------------------------------------------------- */}

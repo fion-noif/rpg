@@ -31,6 +31,7 @@ import {
   removeWorkerFromEvent,
   rotateWorkerToken,
   unassign,
+  updateEventDates,
 } from '@/src/admin/events';
 import type { LinkState } from './types';
 
@@ -87,6 +88,23 @@ export async function removeWorkerAction(form: FormData): Promise<never> {
   const admin = await requireAdminAction();
   const result = await removeWorkerFromEvent(num(form, 'workerId'), admin);
   finish(num(form, 'eventId'), result.ok ? undefined : result.reason);
+}
+
+/**
+ * Moving the weekend's dates. Worth knowing while reading this page: this is the *only*
+ * remedy for a weekend that ran past its end date, because worker link expiry is derived
+ * from that date (src/workers.ts) — rotating a worker's link re-derives the same dead
+ * expiry, so extending the event is what restores access.
+ */
+export async function updateEventDatesAction(form: FormData): Promise<never> {
+  const admin = await requireAdminAction();
+  const eventId = num(form, 'eventId');
+  const result = await updateEventDates(
+    eventId,
+    { startDate: str(form, 'startDate'), endDate: str(form, 'endDate') },
+    admin
+  );
+  finish(eventId, result.ok ? undefined : result.reason);
 }
 
 export async function closeEventAction(form: FormData): Promise<never> {

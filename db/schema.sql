@@ -248,6 +248,8 @@ CREATE TABLE IF NOT EXISTS admin_actions (
   id              SERIAL PRIMARY KEY,
   at              TIMESTAMPTZ NOT NULL DEFAULT now(),
   action          TEXT NOT NULL, -- edit-qty|void-line|add-line|approve|post|post-failed|unapprove|close-event
+                                 -- |add-customer|remove-customer|add-worker|rotate-token
+                                 -- |remove-worker|edit-event-dates
   event_id        INTEGER REFERENCES events(id),
   customer_qbo_id TEXT REFERENCES customers(qbo_id),
   batch_id        INTEGER REFERENCES charge_batches(id) ON DELETE SET NULL,
@@ -308,3 +310,45 @@ CREATE UNIQUE INDEX IF NOT EXISTS staff_admin ON staff (admin_id) WHERE admin_id
 ALTER TABLE admin_actions ADD COLUMN IF NOT EXISTS admin_id INTEGER REFERENCES admins(id);
 
 CREATE INDEX IF NOT EXISTS admin_actions_admin ON admin_actions (admin_id, id DESC);
+
+-- ---------------------------------------------------------------------------
+-- M4: event dates, generated event codes, and expiring worker links.
+--
+-- A race weekend is a date range, and the manager knows those dates — so they are now the
+-- input, and `events.code` is derived from them instead of typed. The code stays in the
+-- schema because it is not a label: it is the QuickBooks DocNumber (`RW-{code}-{customerId}`,
+-- src/charges.ts) that makes posting idempotent under §23 Rule 5, and the bookkeeper
+-- reconciles against it inside QuickBooks. It is therefore write-once — by the time anyone
+-- edits an event's dates the code may already be printed on a posted invoice, so it is
+-- never re-derived (src/admin/events.ts `updateEventDates`).
+--
+-- The dates also give worker links a lifetime for the first time: expiry is *derived* from
+-- `end_date` on every request (src/workers.ts `resolveToken`) rather than stamped onto each
+-- token, so extending a weekend that ran long extends every worker's link at once and no
+-- credential can disagree with the event it belongs to.
+-- All statements below are replay-safe.
+-- ---------------------------------------------------------------------------
+
+ALTER TABLE events ADD COLUMN IF NOT EXISTS start_date DATE;
+ALTER TABLE events ADD COLUMN IF NOT EXISTS end_date   DATE;
+
+-- One-time backfill of pre-M4 events, which have no dates at all. `created_at` is the only
+-- signal available, and a weekend is three days; both columns are guarded on IS NULL so
+-- this can never touch a row that has real dates, and every replay is a no-op.
+UPDATE events
+SET start_date = COALESCE(start_date, created_at::date),
+    end_date   = COALESCE(end_date, created_at::date + 2)
+WHERE start_date IS NULL OR end_date IS NULL;
+
+-- Loud failure if the backfill missed a row rather than a silently half-migrated table.
+-- (SET NOT NULL on an already-NOT NULL column is a no-op, so this replays cleanly.)
+ALTER TABLE events ALTER COLUMN start_date SET NOT NULL;
+ALTER TABLE events ALTER COLUMN end_date   SET NOT NULL;
+
+-- A single-day event is legal (end = start); an event that ends before it starts is not,
+-- and would hand `resolveToken` an already-expired link for a weekend still to come.
+DO $$
+BEGIN
+  ALTER TABLE events ADD CONSTRAINT events_dates_ordered CHECK (end_date >= start_date);
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
