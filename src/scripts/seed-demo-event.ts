@@ -37,12 +37,12 @@ function daysFromToday(offset: number): string {
  * would derive a *different* suffix, `name` is the key everything below re-finds the event by.
  * That works only because this seeder owns the name and no human ever types it.
  *
- * "(demo)" is load-bearing for the same reason: seed.example.json describes the same weekend,
- * and now that the event is re-found by name rather than by a distinct code, an identical
- * name would make `npm run seed` silently adopt this demo event instead of building its own.
+ * It also has to stay *different* from the event name in seed.example.json. Now that events
+ * are re-found by name rather than by a hand-typed code, two seeders sharing a name would
+ * make `npm run seed` silently adopt this demo weekend instead of building its own.
  */
 const EVENT = {
-  name: '2026 US Karting Championship - Round 7 (demo)',
+  name: '2026 USPKS NCMP',
   // Relative to today, not fixed literals. Worker link expiry is derived from `end_date`
   // (src/workers.ts), so a hard-coded weekend would make every login link this script prints
   // dead on arrival the moment that weekend passed — which is exactly when someone reaches
@@ -61,14 +61,14 @@ const MIKE: AdminActor = { id: 1, name: 'Mike Rolison' };
 
 /** A realistic bilingual crew (design doc §8): most people cover one customer, two cover two. */
 const WORKERS: { name: string; language: 'en' | 'es'; customers: string[] }[] = [
-  { name: 'Tony Alvarez', language: 'es', customers: ['Rolison Performance Group'] },
-  { name: 'Marcus Webb', language: 'en', customers: ['Rolison Performance Group', 'Garcia Racing'] },
-  { name: 'José Herrera', language: 'es', customers: ['Chen Racing'] },
-  { name: 'Dale Kowalski', language: 'en', customers: ['Chen Racing', 'Miller Motorsports'] },
-  { name: 'Luis Ramírez', language: 'es', customers: ['Martínez Karting'] },
-  { name: 'Brianna Cole', language: 'en', customers: ['Ibáñez Racing Team'] },
-  { name: 'Miguel Castillo', language: 'es', customers: ['Nitro Kart Team'] },
-  { name: 'Ryan Petrov', language: 'en', customers: ['Dylan Reyes'] },
+  { name: 'Braddy Egger', language: 'en', customers: ['Guss Lawrence'] },
+  { name: 'Sebastian', language: 'es', customers: ['Guss Lawrence', 'Mario Barrios'] },
+  { name: 'Mattos', language: 'en', customers: ['Mingnan Liu'] },
+  { name: 'Luigi', language: 'en', customers: ['Mingnan Liu', 'Grayson Walcott'] },
+  { name: 'Patro', language: 'es', customers: ['Donovan Bonilla'] },
+  { name: 'Kevin', language: 'es', customers: ['Ibáñez Racing Team'] },
+  { name: 'Patrick', language: 'en', customers: ['Jake Drew'] },
+  { name: 'Leo', language: 'es', customers: ['Fion Shi'] },
 ];
 
 /**
@@ -77,34 +77,34 @@ const WORKERS: { name: string; language: 'en' | 'es'; customers: string[] }[] = 
  * a customer nobody is covering yet.
  */
 const PARTICIPANTS = [
-  'Rolison Performance Group',
-  'Garcia Racing',
-  'Chen Racing',
-  'Miller Motorsports',
-  'Martínez Karting',
+  'Guss Lawrence',
+  'Mario Barrios',
+  'Mingnan Liu',
+  'Grayson Walcott',
+  'Donovan Bonilla',
   'Ibáñez Racing Team',
-  'Nitro Kart Team',
-  'Dylan Reyes',
-  'Sophia Whitaker',
-  'Camila Sandoval',
+  'Jake Drew',
+  'Fion Shi',
+  'Lucas Palacio',
+  'James Cushman',
 ];
 
 /**
- * Pre-recorded usage, `[sku, qty]` per (worker, customer) tab. Rolison Performance Group and
- * Chen Racing each get parts from *two* workers, so the review page's merged running list —
+ * Pre-recorded usage, `[sku, qty]` per (worker, customer) tab. Guss Lawrence and
+ * Mingnan Liu each get parts from *two* workers, so the review page's merged running list —
  * and the "who entered this" column — have something real to show.
  */
 const USAGE: { worker: string; customer: string; parts: [string, number][] }[] = [
-  { worker: 'Tony Alvarez', customer: 'Rolison Performance Group', parts: [['TIRE-SET-MG', 2], ['AX50-M', 1], ['SPR-80T', 2], ['CH219-L', 3], ['BRK-PAD-F', 2], ['OTH-FUEL-JUG', 1]] },
-  { worker: 'Marcus Webb', customer: 'Rolison Performance Group', parts: [['ENG-SPARK', 4], ['CH-LUBE', 2], ['HW-BOLT-M8', 1]] },
-  { worker: 'Marcus Webb', customer: 'Garcia Racing', parts: [['MG-YEL', 4], ['SPR-76T', 1], ['BRK-FLUID', 2], ['OTH-LABOR', 3]] },
-  { worker: 'José Herrera', customer: 'Chen Racing', parts: [['BOD-KIT-CIK', 1], ['BOD-SEAT', 1], ['HW-STEER-WHL', 1]] },
-  { worker: 'Dale Kowalski', customer: 'Chen Racing', parts: [['CH-LINK-219', 4], ['SPR-11T', 2]] },
-  { worker: 'Dale Kowalski', customer: 'Miller Motorsports', parts: [['ENG-PIST-IAME', 1], ['ENG-GASKET', 2], ['ENG-SPARK', 2], ['OTH-COOL', 1]] },
-  { worker: 'Luis Ramírez', customer: 'Martínez Karting', parts: [['TIRE-SET-VEGA', 1], ['AX50-H', 1], ['SPR-84T', 2], ['CH219-S', 1], ['BRK-PAD-R', 1], ['ENG-EXH', 1]] },
-  { worker: 'Brianna Cole', customer: 'Ibáñez Racing Team', parts: [['MG-WT', 4], ['BRK-DISC-R', 1], ['OTH-TIRE-GAUGE', 1]] },
-  { worker: 'Miguel Castillo', customer: 'Nitro Kart Team', parts: [['ENG-CLUTCH', 1], ['ENG-CARB-KIT', 1], ['HW-TIEROD', 2]] },
-  { worker: 'Ryan Petrov', customer: 'Dylan Reyes', parts: [['OTH-STAND', 1], ['HW-ZIP', 2], ['HW-WASH', 1], ['ENG-SPARK', 1]] },
+  { worker: 'Braddy Egger', customer: 'Guss Lawrence', parts: [['TIRE-SET-MG', 2], ['AX50-M', 1], ['SPR-80T', 2], ['CH219-L', 3], ['BRK-PAD-F', 2], ['OTH-FUEL-JUG', 1]] },
+  { worker: 'Sebastian', customer: 'Guss Lawrence', parts: [['ENG-SPARK', 4], ['CH-LUBE', 2], ['HW-BOLT-M8', 1]] },
+  { worker: 'Sebastian', customer: 'Mario Barrios', parts: [['MG-YEL', 4], ['SPR-76T', 1], ['BRK-FLUID', 2], ['OTH-LABOR', 3]] },
+  { worker: 'Mattos', customer: 'Mingnan Liu', parts: [['BOD-KIT-CIK', 1], ['BOD-SEAT', 1], ['HW-STEER-WHL', 1]] },
+  { worker: 'Luigi', customer: 'Mingnan Liu', parts: [['CH-LINK-219', 4], ['SPR-11T', 2]] },
+  { worker: 'Luigi', customer: 'Grayson Walcott', parts: [['ENG-PIST-IAME', 1], ['ENG-GASKET', 2], ['ENG-SPARK', 2], ['OTH-COOL', 1]] },
+  { worker: 'Patro', customer: 'Donovan Bonilla', parts: [['TIRE-SET-VEGA', 1], ['AX50-H', 1], ['SPR-84T', 2], ['CH219-S', 1], ['BRK-PAD-R', 1], ['ENG-EXH', 1]] },
+  { worker: 'Kevin', customer: 'Ibáñez Racing Team', parts: [['MG-WT', 4], ['BRK-DISC-R', 1], ['OTH-TIRE-GAUGE', 1]] },
+  { worker: 'Patrick', customer: 'Jake Drew', parts: [['ENG-CLUTCH', 1], ['ENG-CARB-KIT', 1], ['HW-TIEROD', 2]] },
+  { worker: 'Leo', customer: 'Fion Shi', parts: [['OTH-STAND', 1], ['HW-ZIP', 2], ['HW-WASH', 1], ['ENG-SPARK', 1]] },
 ];
 
 /**
@@ -113,12 +113,16 @@ const USAGE: { worker: string; customer: string; parts: [string, number][] }[] =
  * and the export can show a struck-through line.
  */
 const VOIDS: { worker: string; customer: string; sku: string }[] = [
-  { worker: 'Tony Alvarez', customer: 'Rolison Performance Group', sku: 'OTH-FUEL-JUG' },
-  { worker: 'Dale Kowalski', customer: 'Chen Racing', sku: 'SPR-11T' },
+  // The worker has to be the one who *recorded* the line in USAGE above — a void is an edit
+  // to a specific (worker, customer) tab, not to the customer. Getting this wrong does not
+  // fail cleanly: `workerIds.get(...)!` below asserts away the undefined, so a stale name
+  // reaches Postgres as a NULL worker_id and surfaces as a NOT NULL violation.
+  { worker: 'Braddy Egger', customer: 'Guss Lawrence', sku: 'OTH-FUEL-JUG' },
+  { worker: 'Luigi', customer: 'Mingnan Liu', sku: 'SPR-11T' },
 ];
 
 /** Approved and sent to QuickBooks — the state a tester otherwise has to create themselves. */
-const POST_CUSTOMER = 'Martínez Karting';
+const POST_CUSTOMER = 'Donovan Bonilla';
 
 /**
  * Approved, attempted, and failed. Produced by injecting a `create` that throws instead of
@@ -127,7 +131,7 @@ const POST_CUSTOMER = 'Martínez Karting';
  * remote call never happens. `deps.query` stays real so the preference pre-flight and the
  * query-before-create both behave exactly as they would in production.
  */
-const POST_FAILED_CUSTOMER = 'Nitro Kart Team';
+const POST_FAILED_CUSTOMER = 'Jake Drew';
 
 // ---------------------------------------------------------------------------
 // --reset

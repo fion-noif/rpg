@@ -258,6 +258,18 @@ export const DEMO_CUSTOMERS: DemoCustomer[] = [
   { displayName: 'Owen Brennan', person: { given: 'Owen', family: 'Brennan' }, email: 'owen.brennan@example.com', phone: '(559) 555-0205' },
   { displayName: 'The Okafor Family', email: 'okafor.family@example.com', phone: '(559) 555-0206' },
   { displayName: 'The Nakamura Family', email: 'nakamura.family@example.com', phone: '(559) 555-0207' },
+  // The 2026 USPKS NCMP entry list (src/scripts/seed-demo-event.ts). Individuals, so they
+  // carry Given/Family names — QuickBooks wants those on a person, and the seeded demo
+  // weekend bills them by DisplayName.
+  { displayName: 'Guss Lawrence', person: { given: 'Guss', family: 'Lawrence' }, email: 'guss.lawrence@example.com', phone: '(559) 555-0208' },
+  { displayName: 'Mario Barrios', person: { given: 'Mario', family: 'Barrios' }, email: 'mario.barrios@example.com', phone: '(559) 555-0209' },
+  { displayName: 'Mingnan Liu', person: { given: 'Mingnan', family: 'Liu' }, email: 'mingnan.liu@example.com', phone: '(559) 555-0210' },
+  { displayName: 'Grayson Walcott', person: { given: 'Grayson', family: 'Walcott' }, email: 'grayson.walcott@example.com', phone: '(559) 555-0211' },
+  { displayName: 'Donovan Bonilla', person: { given: 'Donovan', family: 'Bonilla' }, email: 'donovan.bonilla@example.com', phone: '(559) 555-0212' },
+  { displayName: 'Jake Drew', person: { given: 'Jake', family: 'Drew' }, email: 'jake.drew@example.com', phone: '(559) 555-0213' },
+  { displayName: 'Fion Shi', person: { given: 'Fion', family: 'Shi' }, email: 'fion.shi@example.com', phone: '(559) 555-0214' },
+  { displayName: 'Lucas Palacio', person: { given: 'Lucas', family: 'Palacio' }, email: 'lucas.palacio@example.com', phone: '(559) 555-0215' },
+  { displayName: 'James Cushman', person: { given: 'James', family: 'Cushman' }, email: 'james.cushman@example.com', phone: '(559) 555-0216' },
 ];
 
 /**
