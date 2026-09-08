@@ -6,3 +6,10 @@ data/
 myevent.json
 tsconfig.tsbuildinfo
 .claude/
+
+# Terraform: state may reference (never contain, by design — see infra/versions.tf) live
+# infrastructure; the .terraform dir is a provider cache. The lock file IS committed.
+infra/.terraform/
+infra/*.tfstate
+infra/*.tfstate.*
+infra/*.tfvars

@@ -1,0 +1,48 @@
+# Build the image and push it to ECR; App Runner watches :latest and deploys itself
+# (auto_deployments_enabled in infra/apprunner.tf), so this workflow deliberately holds no
+# App Runner permissions — and, via OIDC, no stored AWS keys at all. The assumed role can
+# push to one ECR repo and nothing else (infra/github-oidc.tf).
+#
+# Repo variables to set once (Settings → Secrets and variables → Actions → Variables):
+#   AWS_DEPLOY_ROLE_ARN   from `terraform output github_deploy_role_arn`
+#   AWS_ECR_REPOSITORY    from `terraform output ecr_repository_url`
+#   AWS_REGION            e.g. us-west-2
+name: deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  id-token: write # the OIDC token GitHub mints for AWS
+  contents: read
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false # never cancel a half-pushed image
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Assume the deploy role via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Log in to ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      # :latest is what App Runner deploys; :<sha> is the immutable audit trail and the
+      # rollback lever (retag an old sha as latest and App Runner redeploys it).
+      - name: Build and push
+        run: |
+          docker build -t "$REPO:latest" -t "$REPO:$GITHUB_SHA" .
+          docker push "$REPO:latest"
+          docker push "$REPO:$GITHUB_SHA"
+        env:
+          REPO: ${{ vars.AWS_ECR_REPOSITORY }}

@@ -11,8 +11,12 @@ carries the name of the manager who took it. Next: the rest of M3 hardening
 
 ## Stack
 
-Next.js (one app: worker UI + API) · PostgreSQL (Docker locally, RDS in prod) ·
-direct QuickBooks REST calls. Sync is manual-only (design doc §19).
+Next.js (one app: worker UI + API) · PostgreSQL (Docker locally, Aurora Serverless v2 in
+prod) · direct QuickBooks REST calls. Sync is manual-only (design doc §19).
+
+Production runs on AWS App Runner and is pausable between race weekends — see
+**[docs/deploy.md](docs/deploy.md)** for the first deploy, updates, pause/resume, and the
+three-layer backup story.
 
 ## Setup
 
