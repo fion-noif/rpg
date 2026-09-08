@@ -1,0 +1,21 @@
+# Secrets must never enter the build context — an image layer is forever.
+.env
+.env.*
+!.env.example
+
+# Build outputs and local state; the image builds these itself.
+node_modules
+.next
+tsconfig.tsbuildinfo
+
+# Not the app.
+.git
+.github
+.claude
+infra
+docs
+README.md
+myevent.json
+seed.example.json
+Dockerfile
+.dockerignore
