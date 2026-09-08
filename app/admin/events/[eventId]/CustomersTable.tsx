@@ -81,7 +81,13 @@ export function CustomersTable({
         <thead>
           <tr>
             <th>Customer</th>
-            <th>Recorded by</th>
+            {/* NOT "Recorded by" — this column comes from `assignments` (who the manager
+                pointed at this customer), not from `submissions` (who has actually recorded
+                a part). Those routinely differ: a worker can be assigned and record nothing
+                all weekend, and a manager adjustment during review records against no
+                assigned worker at all. The two headers with the same name elsewhere
+                (app/admin/usage, CustomerReview) really are about recorded lines. */}
+            <th>Assigned worker(s)</th>
             <th>Invoicing</th>
             <th />
           </tr>
@@ -172,11 +178,14 @@ function FragmentRow({
           </a>
           {!c.active && <span className="admin-badge closed">inactive in QBO</span>}
         </td>
+        {/* Several workers on one customer is normal, not an edge case — a busy team splits
+            a car across a mechanic and a tyre fitter. listCustomers array_aggs them
+            alphabetically, so this is a stable list rather than a first-one-wins. */}
         <td>
           {c.workers.length ? (
             c.workers.join(', ')
           ) : (
-            <span className="admin-muted">nobody yet</span>
+            <span className="admin-muted">nobody assigned</span>
           )}
         </td>
         <td>
