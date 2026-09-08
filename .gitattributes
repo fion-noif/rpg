@@ -1,0 +1,5 @@
+# Shell scripts must check out with LF everywhere: a CRLF docker-entrypoint.sh dies inside
+# the Alpine image with an unhelpful "not found", and the infra scripts break the same way
+# under WSL. This overrides core.autocrlf=true, the Git-for-Windows installer default —
+# without it, any docker build from a Windows checkout ships a broken entrypoint.
+*.sh text eol=lf
