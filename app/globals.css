@@ -725,8 +725,7 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
-.admin-datesedit > summary,
-.admin-assign > summary {
+.admin-datesedit > summary {
   font-size: 13px;
   font-weight: 600;
   color: #3f3f46;
@@ -734,8 +733,7 @@ body {
   padding: 4px 0;
 }
 
-.admin-datesedit[open] > summary,
-.admin-assign[open] > summary {
+.admin-datesedit[open] > summary {
   color: #18181b;
 }
 
@@ -763,19 +761,84 @@ body {
   color: #a1a1aa;
 }
 
-/* The assign disclosure row: a second <tr> per customer, visually attached to the
-   row above it (no top border, tinted) so it reads as part of that customer. */
-tr.admin-assign-row > td {
-  padding: 0 10px 8px;
-  background: #fafafa;
+/* Stable column widths on the customers table. Without them, opening an assign panel
+   widens its column and reflows every other row — jarring at 10 customers, unusable
+   at 50. Fixed widths also make a long list scannable, since the names line up. */
+.admin-table.admin-customers {
+  table-layout: fixed;
 }
 
+.admin-table.admin-customers th:nth-child(1) { width: 30%; }
+.admin-table.admin-customers th:nth-child(2) { width: 38%; }
+.admin-table.admin-customers th:nth-child(3) { width: 17%; }
+.admin-table.admin-customers th:nth-child(4) { width: 15%; }
+
+.admin-table.admin-customers td {
+  overflow-wrap: anywhere;
+}
+
+/* The assigned-worker names, above the "+ Assign" toggle in the same cell. */
+.admin-assigned {
+  margin-bottom: 4px;
+}
+
+/* The assign toggle reads as a small button, in the column it affects. The default
+   disclosure triangle is dropped: "+ Assign" already says it opens something, and the
+   marker made it look like a tree node rather than a control. */
+.admin-assign > summary {
+  display: inline-block;
+  list-style: none;
+  font-size: 12px;
+  font-weight: 600;
+  color: #3f3f46;
+  background: #fff;
+  border: 1px solid #d4d4d8;
+  border-radius: 999px;
+  padding: 2px 10px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.admin-assign > summary::-webkit-details-marker,
+.admin-assign > summary::marker {
+  display: none;
+}
+
+.admin-assign > summary:hover {
+  border-color: #a1a1aa;
+  color: #18181b;
+}
+
+.admin-assign[open] > summary {
+  background: #18181b;
+  border-color: #18181b;
+  color: #fff;
+}
+
+/* Open panel: stacked, because it now lives in a table cell rather than a full-width
+   strip. The inputs go full width of the cell instead of trying to sit in a row. */
 .admin-assign-body {
-  padding: 4px 0 4px;
+  padding: 8px 0 4px;
+}
+
+.admin-assign-body > form {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+}
+
+.admin-assign-body .admin-input {
+  width: 100%;
 }
 
 .admin-assign-body .status-note,
 .admin-assign-body .admin-linkbox {
   margin-top: 8px;
+}
+
+/* The link box is capped at 520px globally, which overflows a table cell. The token is
+   select-on-focus, so a narrow box still copies in one click. */
+.admin-assign-body .admin-linkbox {
+  max-width: 100%;
 }
 /* --- END: event tabs + assign panel (app/admin/events/[eventId]) ----------- */

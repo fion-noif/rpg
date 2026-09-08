@@ -77,7 +77,7 @@ export function CustomersTable({
         </span>
       </div>
 
-      <table className="admin-table">
+      <table className="admin-table admin-customers">
         <thead>
           <tr>
             <th>Customer</th>
@@ -94,9 +94,11 @@ export function CustomersTable({
         </thead>
         <tbody>
           {shown.map((c) => (
-            // Keyed on qboId, never an index: the assign panel below holds a one-time magic
-            // link in React state, and a remount would destroy it.
-            <FragmentRow
+            // Keyed on qboId, never an index: the assign panel in each row holds a one-time
+            // magic link in React state, and a remount would destroy it. Filtering reorders
+            // nothing, but it does change which rows are present — an index key would shift
+            // panels between customers.
+            <CustomerRowView
               key={c.qboId}
               c={c}
               eventId={eventId}
@@ -151,12 +153,15 @@ export function CustomersTable({
 }
 
 /**
- * One customer as two rows: the data, then its assign panel.
+ * One customer, one row. The assign control lives inside the "Assigned worker(s)" cell,
+ * directly under the names it changes — the affordance belongs in the column it affects,
+ * not in a separate strip below where it reads as unrelated furniture.
  *
- * Two rows rather than one because the panel needs the full table width, and a nested table
- * would break the column alignment that makes 50 rows scannable.
+ * Still a <details>, not a button plus client state: it hides its content with CSS rather
+ * than unmounting, which is what keeps a one-time magic link alive across a collapse (see
+ * AssignPanel), and it opens with JavaScript off.
  */
-function FragmentRow({
+function CustomerRowView({
   c,
   eventId,
   closed,
@@ -182,10 +187,23 @@ function FragmentRow({
             a car across a mechanic and a tyre fitter. listCustomers array_aggs them
             alphabetically, so this is a stable list rather than a first-one-wins. */}
         <td>
-          {c.workers.length ? (
-            c.workers.join(', ')
-          ) : (
-            <span className="admin-muted">nobody assigned</span>
+          <div className="admin-assigned">
+            {c.workers.length ? (
+              c.workers.join(', ')
+            ) : (
+              <span className="admin-muted">nobody assigned</span>
+            )}
+          </div>
+          {!closed && (
+            <details className="admin-assign">
+              <summary>+ Assign</summary>
+              <AssignPanel
+                eventId={eventId}
+                customer={{ qboId: c.qboId, displayName: c.displayName }}
+                workers={assignable}
+                staff={staff}
+              />
+            </details>
           )}
         </td>
         <td>
@@ -209,25 +227,6 @@ function FragmentRow({
           )}
         </td>
       </tr>
-      {!closed && (
-        <tr className="admin-assign-row">
-          <td colSpan={4}>
-            {/* <details> rather than a modal on purpose. It hides its content with CSS, so
-                the panel stays mounted — collapse it after copying a one-time link, reopen
-                it, and the link is still there. A dialog would need bookkeeping to match
-                that, needs JS to open at all, and would cover the row you are working on. */}
-            <details className="admin-assign">
-              <summary>Assign a worker</summary>
-              <AssignPanel
-                eventId={eventId}
-                customer={{ qboId: c.qboId, displayName: c.displayName }}
-                workers={assignable}
-                staff={staff}
-              />
-            </details>
-          </td>
-        </tr>
-      )}
     </>
   );
 }
