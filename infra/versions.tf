@@ -18,6 +18,9 @@ terraform {
 
 provider "aws" {
   region = var.region
+  # Empty string means "use the ambient credential chain" — see variables.tf for why this is
+  # pinned by default rather than inherited from AWS_PROFILE.
+  profile = var.aws_profile != "" ? var.aws_profile : null
   default_tags {
     tags = { app = "rpg" }
   }
@@ -26,8 +29,9 @@ provider "aws" {
 # Second region, exclusively for the backup bucket's replica (s3-backups.tf): a copy of the
 # dumps that survives a regional outage or a fat-fingered bucket deletion in the primary.
 provider "aws" {
-  alias  = "backup_region"
-  region = var.backup_region
+  alias   = "backup_region"
+  region  = var.backup_region
+  profile = var.aws_profile != "" ? var.aws_profile : null
   default_tags {
     tags = { app = "rpg" }
   }

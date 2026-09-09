@@ -23,8 +23,43 @@ Two deliberate calls to know about before touching anything:
 
 ## Prerequisites (operator laptop)
 
-- AWS CLI authenticated against the account, `terraform >= 1.9`, `docker`
+- AWS CLI, `terraform >= 1.9`, `docker`
 - `pg_dump`/`pg_restore` 16+: `brew install libpq && brew link --force libpq`
+
+### Credentials
+
+Terraform and the operator scripts authenticate as the dedicated **`rpg`** IAM user under the
+`rpg` CLI profile:
+
+```sh
+aws configure --profile rpg     # access key for the rpg user; region us-west-2
+AWS_PROFILE=rpg aws sts get-caller-identity   # expect .../user/rpg
+```
+
+`rpg` carries `AdministratorAccess`. That is deliberate, not a shortcut: this stack creates
+four IAM roles (`infra/github-oidc.tf`, `apprunner.tf`, `s3-backups.tf`), so it needs
+`iam:CreateRole` + `iam:PutRolePolicy` + `iam:PassRole` regardless — and any principal holding
+those three can grant itself admin in one step. A hand-scoped policy containing them would be
+admin-equivalent with extra maintenance. Give the user **programmatic access only**; no
+console password.
+
+The profile name is pinned in `infra/variables.tf` (`var.aws_profile`) rather than inherited
+from the shell, so an apply cannot quietly run against whichever profile happened to be
+default. `infra/scripts/_env.sh` pins the same profile *and* `AWS_REGION` for the scripts.
+Both are defaults — a second operator overrides with `-var aws_profile=…` / `AWS_PROFILE=…`.
+
+Everything below assumes:
+
+```sh
+export AWS_PROFILE=rpg
+export AWS_REGION=us-west-2     # the laptop's default profile may point elsewhere
+```
+
+**If a key is ever exposed**, AWS attaches `AWSCompromisedKeyQuarantineV2` to the user, whose
+explicit `Deny` beats `AdministratorAccess` — applies fail on `iam:CreateRole` with "explicit
+deny in an identity-based policy" while unrelated calls still succeed, which is a confusing
+symptom if you don't know the cause. Delete the key, work the auto-filed AWS Support case to
+find the leak, check Billing and CloudTrail for abuse, then detach the quarantine policy.
 
 ## First deploy
 

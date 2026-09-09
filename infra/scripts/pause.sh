@@ -8,6 +8,9 @@
 set -euo pipefail
 
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
+# shellcheck source=_env.sh
+. "$SCRIPT_DIR/_env.sh"
+
 "$SCRIPT_DIR/backup.sh"
 
 ARN=$(aws apprunner list-services --query "ServiceSummaryList[?ServiceName=='rpg'].ServiceArn | [0]" --output text)

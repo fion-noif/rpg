@@ -1,3 +1,19 @@
+variable "aws_profile" {
+  description = <<-EOT
+    Named AWS CLI profile terraform authenticates with. Pinned rather than left to the
+    ambient credential chain so an apply cannot silently run against whatever profile the
+    shell happened to have — this stack creates IAM roles and a database, and "wrong
+    account" is not a mistake you notice from the plan output.
+
+    The `rpg` user is a dedicated single-purpose operator identity (AdministratorAccess:
+    the stack creates four IAM roles, so iam:CreateRole + iam:PassRole are unavoidable and
+    any policy granting those is admin-equivalent anyway). Set to "" to fall back to the
+    default credential chain — for a second operator whose profile is named differently.
+  EOT
+  type        = string
+  default     = "rpg"
+}
+
 variable "region" {
   description = "Primary region. Oregon: the team is Oregon-based, and latency to a paddock is dominated by cellular anyway."
   type        = string

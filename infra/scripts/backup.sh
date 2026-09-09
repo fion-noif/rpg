@@ -8,6 +8,9 @@
 # Needs: aws CLI (authenticated), pg_dump 16+ (`brew install libpq && brew link --force libpq`).
 set -euo pipefail
 
+# shellcheck source=_env.sh
+. "$(cd "$(dirname "$0")" && pwd)/_env.sh"
+
 # The connection string comes from SSM — the same value the app uses — so a backup can never
 # quietly dump the wrong database. Overridable for the restore drill.
 DATABASE_URL="${DATABASE_URL:-$(aws ssm get-parameter --name /rpg/database-url --with-decryption --query Parameter.Value --output text)}"

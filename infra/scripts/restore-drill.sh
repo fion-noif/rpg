@@ -10,6 +10,9 @@
 # Needs: aws CLI, docker, pg_restore 16+ (`brew install libpq`).
 set -euo pipefail
 
+# shellcheck source=_env.sh
+. "$(cd "$(dirname "$0")" && pwd)/_env.sh"
+
 ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
 BUCKET="${RPG_BACKUP_BUCKET:-rpg-backups-${ACCOUNT_ID}}"
 
