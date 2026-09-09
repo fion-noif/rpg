@@ -8,6 +8,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireAdminIdentity } from '@/src/admin-session';
 import { createEvent } from '@/src/admin/events';
+import { redirectBaseUrl } from '@/src/base-url';
 
 export async function POST(req: NextRequest) {
   const auth = await requireAdminIdentity(req);
@@ -29,5 +30,5 @@ export async function POST(req: NextRequest) {
 
   // 303 turns the POST into a GET, so a refresh doesn't try to create the event again.
   const to = result.ok ? `/admin/events/${result.eventId}` : `/admin?error=${result.reason}`;
-  return NextResponse.redirect(new URL(to, req.nextUrl.origin), 303);
+  return NextResponse.redirect(new URL(to, redirectBaseUrl(req)), 303);
 }

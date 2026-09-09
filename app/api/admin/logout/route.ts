@@ -4,9 +4,10 @@
 // link prefetch can't sign the manager out.)
 import { NextRequest, NextResponse } from 'next/server';
 import { ADMIN_COOKIE, adminCookieOptions } from '@/src/admin-auth';
+import { redirectBaseUrl } from '@/src/base-url';
 
 export async function POST(req: NextRequest): Promise<NextResponse> {
-  const res = NextResponse.redirect(new URL('/admin/login', req.nextUrl.origin), 303);
+  const res = NextResponse.redirect(new URL('/admin/login', redirectBaseUrl(req)), 303);
   // Same attributes as the mint, with maxAge 0 — otherwise the browser may keep
   // the original cookie because the delete doesn't match on path/secure.
   res.cookies.set(ADMIN_COOKIE, '', { ...adminCookieOptions(), maxAge: 0 });

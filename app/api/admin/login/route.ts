@@ -20,11 +20,15 @@ import {
 } from '@/src/admin-auth';
 import { authenticateAdmin } from '@/src/admin/admins';
 import { config } from '@/src/config';
+import { redirectBaseUrl } from '@/src/base-url';
 
 function redirect(req: NextRequest, path: string): NextResponse {
   // 303: turns the form POST into a GET of the destination, so a refresh of
   // /admin doesn't re-submit the password.
-  return NextResponse.redirect(new URL(path, req.nextUrl.origin), 303);
+  //
+  // Not `req.nextUrl.origin`: in dev that is always localhost regardless of the Host
+  // sent, which sent a manager signing in from a phone to a host only the laptop has.
+  return NextResponse.redirect(new URL(path, redirectBaseUrl(req)), 303);
 }
 
 export async function POST(req: NextRequest): Promise<NextResponse> {
