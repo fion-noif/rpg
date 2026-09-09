@@ -21,6 +21,7 @@ import { addCustomer, addWorkerToEvent, assign, createEvent } from '../admin/eve
 import { setUsageQty } from '../usage';
 import { approveBatch, batchFor, postBatch } from '../charges';
 import { query as qboQuery, QboError } from '../qbo/client';
+import { config } from '../config';
 
 const reset = process.argv.slice(2).includes('--reset');
 
@@ -201,6 +202,18 @@ function fail(message: string): never {
 }
 
 try {
+  // Same rule seed-qbo enforces (src/qbo/catalog.ts checkWriteGuard), for the same reason:
+  // this script POSTs a real invoice through the real state machine, and the only thing
+  // that makes that harmless is the company being a sandbox. The check lives in code, not
+  // just in the README heading, because the day QBO_ENVIRONMENT flips to production is
+  // exactly the day someone runs "the usual demo command" out of habit.
+  if (config.environment !== 'sandbox') {
+    fail(
+      'Refusing to run: QBO_ENVIRONMENT is not "sandbox". This script posts a demo invoice ' +
+        'to QuickBooks and must never touch a production company.'
+    );
+  }
+
   const admin = await q<{ id: number; name: string }>('SELECT id, name FROM admins WHERE id = 1');
   if (!admin[0]) fail('No admin with id 1. Run `npm run create-admin -- mrolison "Mike Rolison" --owner` first.');
 

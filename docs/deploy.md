@@ -72,9 +72,19 @@ terraform apply -var "app_base_url=$(terraform output -raw service_url)"
 service creation. Fix the secret, trigger a deployment, done.)
 
 Then bootstrap the application itself, from the laptop against the production DB — the same
-commands as local setup, pointed at the public endpoint:
+commands as local setup, pointed at the public endpoint.
+
+**Every node script run from the laptop needs the RDS CA bundle.** The stored DATABASE_URL
+says `sslmode=require`, which node-pg treats as *verified* TLS (unlike libpq, where require
+means encrypt-only — `pg_dump` in backup.sh needs nothing). RDS certificates chain to
+Amazon's own CA, not the public trust store, so without the bundle every script below fails
+with `self-signed certificate in certificate chain`. The container has it baked in
+(Dockerfile); the laptop downloads it once:
 
 ```sh
+curl -so ~/rds-global-bundle.pem https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem
+export NODE_EXTRA_CA_CERTS=~/rds-global-bundle.pem
+
 DB_URL=$(aws ssm get-parameter --name /rpg/database-url --with-decryption --query Parameter.Value --output text)
 DATABASE_URL=$DB_URL npm run create-admin -- <username> "<Full Name>" --owner
 DATABASE_URL=$DB_URL npm run auth     # QBO OAuth; tokens land in the qbo_tokens table
@@ -84,6 +94,22 @@ DATABASE_URL=$DB_URL npm run sync
 Sign in at `<service_url>/admin/login`, create the event, print links. Note the QBO app's
 registered redirect URI stays `http://localhost:8355/callback` — the OAuth dance runs on the
 laptop; only the resulting tokens live in the (remote) database.
+
+### Demo data on the deployed system
+
+`npm run seed-demo` works against production the same way — it is just another laptop script
+pointed at the remote DB. It needs the bootstrap above already done (admin id 1, QBO tokens,
+a sync), the CA bundle exported, and one extra variable: **APP_BASE_URL**, because the magic
+links it prints embed whatever base URL the process sees, and links are shown exactly once.
+
+```sh
+APP_BASE_URL=$(cd infra && terraform output -raw service_url) \
+DATABASE_URL=$DB_URL npm run seed-demo          # add -- --reset to rebuild it
+```
+
+It refuses to run unless `QBO_ENVIRONMENT=sandbox` — it posts a real demo invoice through
+the real posting path, so after the flip to production this command is supposed to fail.
+Clean the demo weekend out before real use with `--reset` (or the truncate in the README).
 
 ## Updating
 
