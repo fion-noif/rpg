@@ -20,11 +20,11 @@ import {
 } from './demo-catalog';
 import {
   isManagerOnlyCategory,
-  isWorkerVisibleItem,
+  isMechanicVisibleItem,
   managerOnlyItemSql,
   managerSellableItemSql,
   MANAGER_ONLY_CATEGORIES,
-  workerVisibleItemSql,
+  mechanicVisibleItemSql,
 } from '../catalog';
 import { norm, searchCatalog } from '../search';
 
@@ -269,7 +269,7 @@ test('the service category is not named "Services" — QuickBooks Item names are
 
 test('the seeder files services under exactly the category the app hides', () => {
   // The one assertion tying the two halves of the feature together: if these ever disagree,
-  // services get created in QuickBooks and then shown to workers anyway.
+  // services get created in QuickBooks and then shown to mechanics anyway.
   assert.ok((MANAGER_ONLY_CATEGORIES as readonly string[]).includes(DEMO_SERVICE_CATEGORY));
 });
 
@@ -294,7 +294,7 @@ test('the two undeletable stock service items are the ones marked for re-parenti
 interface VisibilityCase {
   label: string;
   row: { active: boolean; sku: string | null; type: string | null; category: string | null };
-  workerVisible: boolean;
+  mechanicVisible: boolean;
   managerOnly: boolean;
 }
 
@@ -302,56 +302,56 @@ const VISIBILITY_CASES: VisibilityCase[] = [
   {
     label: 'an ordinary racing part',
     row: { active: true, sku: 'AX50-M', type: 'NonInventory', category: 'Axles' },
-    workerVisible: true,
+    mechanicVisible: true,
     managerOnly: false,
   },
   {
     label: 'a part with no category yet',
     row: { active: true, sku: 'AX50-M', type: 'NonInventory', category: null },
-    workerVisible: true,
+    mechanicVisible: true,
     managerOnly: false,
   },
   {
     label: 'a manager-only service',
     row: { active: true, sku: 'SVC-MECH-DAY', type: 'Service', category: 'Race Services' },
-    workerVisible: false,
+    mechanicVisible: false,
     managerOnly: true,
   },
   {
     label: "Intuit's stock Services item: no SKU, no category",
     row: { active: true, sku: null, type: 'Service', category: null },
-    workerVisible: false,
+    mechanicVisible: false,
     managerOnly: false,
   },
   {
     label: 'the same stock item once re-parented under Race Services',
     row: { active: true, sku: null, type: 'Service', category: 'Race Services' },
-    workerVisible: false,
+    mechanicVisible: false,
     managerOnly: true,
   },
   {
     label: 'an inactive part',
     row: { active: false, sku: 'AX50-M', type: 'NonInventory', category: 'Axles' },
-    workerVisible: false,
+    mechanicVisible: false,
     managerOnly: false,
   },
   {
     label: 'an inactive service',
     row: { active: false, sku: 'SVC-MECH-DAY', type: 'Service', category: 'Race Services' },
-    workerVisible: false,
+    mechanicVisible: false,
     managerOnly: false,
   },
   {
     label: 'a Category folder, which is not sellable at all',
     row: { active: true, sku: null, type: 'Category', category: null },
-    workerVisible: false,
+    mechanicVisible: false,
     managerOnly: false,
   },
 ];
 
-test('isWorkerVisibleItem hides services, SKU-less stock items, folders and inactive rows', () => {
+test('isMechanicVisibleItem hides services, SKU-less stock items, folders and inactive rows', () => {
   for (const c of VISIBILITY_CASES) {
-    assert.equal(isWorkerVisibleItem(c.row), c.workerVisible, c.label);
+    assert.equal(isMechanicVisibleItem(c.row), c.mechanicVisible, c.label);
   }
 });
 
@@ -364,34 +364,34 @@ test('isManagerOnlyCategory is exactly the MANAGER_ONLY_CATEGORIES membership te
   }
 });
 
-test('worker-visible and manager-only are disjoint, and neither is empty', () => {
+test('mechanic-visible and manager-only are disjoint, and neither is empty', () => {
   // `managerSellableItemSql` is literally the OR of the two, so the manager seeing a superset
-  // of the worker's catalogue is true by construction; this pins down that the two halves of
+  // of the mechanic's catalogue is true by construction; this pins down that the two halves of
   // that union never overlap, which is what makes "parts plus services" a clean split.
   for (const c of VISIBILITY_CASES) {
-    if (c.workerVisible) assert.ok(!c.managerOnly, `${c.label} cannot be both`);
+    if (c.mechanicVisible) assert.ok(!c.managerOnly, `${c.label} cannot be both`);
   }
-  assert.ok(VISIBILITY_CASES.some((c) => c.workerVisible));
+  assert.ok(VISIBILITY_CASES.some((c) => c.mechanicVisible));
   assert.ok(VISIBILITY_CASES.some((c) => c.managerOnly));
-  assert.ok(managerSellableItemSql().includes(workerVisibleItemSql()));
+  assert.ok(managerSellableItemSql().includes(mechanicVisibleItemSql()));
   assert.ok(managerSellableItemSql().includes(managerOnlyItemSql()));
 });
 
 test('the SQL fragments qualify every column when given a table alias', () => {
   // The popular-parts query joins `items` as `i`, so an unqualified `active` there would be
   // an ambiguous-column error at runtime — a page-level 500 no other test would catch.
-  const aliased = workerVisibleItemSql('i');
+  const aliased = mechanicVisibleItemSql('i');
   const withoutQualified = aliased.replace(/\bi\.\w+/g, '');
   for (const column of ['active', 'type', 'sku', 'category']) {
     assert.match(aliased, new RegExp(`\\bi\\.${column}\\b`), `${column} is not aliased`);
     assert.ok(!new RegExp(`\\b${column}\\b`).test(withoutQualified), `${column} appears unqualified`);
   }
   // And no alias means no prefix, so the fragment still drops into a bare `FROM items`.
-  assert.ok(!workerVisibleItemSql().includes('i.'));
+  assert.ok(!mechanicVisibleItemSql().includes('i.'));
 });
 
 test('the SQL fragments carry no bind placeholders, so they compose into any query', () => {
-  for (const sql of [workerVisibleItemSql(), managerOnlyItemSql(), managerSellableItemSql()]) {
+  for (const sql of [mechanicVisibleItemSql(), managerOnlyItemSql(), managerSellableItemSql()]) {
     assert.ok(!/\$\d/.test(sql), sql);
   }
 });

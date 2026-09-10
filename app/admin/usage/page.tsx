@@ -12,7 +12,7 @@ interface Row {
   item_name: string;
   sku: string | null;
   qty: number;
-  workers: string;
+  mechanics: string;
   last_updated: string;
 }
 
@@ -20,18 +20,18 @@ export default async function AdminUsagePage() {
   await requireAdminPage();
 
   // voided_at IS NULL: removed entries are entry mistakes, not usage.
-  // `w.name` for everyone (M3): a manager adjustment sits on that admin's own worker row,
+  // `w.name` for everyone (M3): a manager adjustment sits on that admin's own mechanic row,
   // which is named after their account, so this column names the actual person either way.
   const rows = await q<Row>(
     `SELECT e.code AS event_code, c.display_name AS customer, l.item_name, l.sku,
             SUM(l.qty)::float AS qty,
-            string_agg(DISTINCT w.name, ', ') AS workers,
+            string_agg(DISTINCT w.name, ', ') AS mechanics,
             MAX(l.updated_at) AS last_updated
      FROM submission_lines l
      JOIN submissions s ON s.id = l.submission_id
      JOIN events e ON e.id = s.event_id
      JOIN customers c ON c.qbo_id = s.customer_qbo_id
-     JOIN workers w ON w.id = s.worker_id
+     JOIN mechanics w ON w.id = s.mechanic_id
      WHERE l.voided_at IS NULL AND e.active
      GROUP BY e.code, c.display_name, l.item_name, l.sku
      ORDER BY e.code, c.display_name, l.item_name`
@@ -69,7 +69,7 @@ export default async function AdminUsagePage() {
               <td>{r.item_name}</td>
               <td>{r.sku ?? ''}</td>
               <td className="num">{r.qty}</td>
-              <td>{r.workers}</td>
+              <td>{r.mechanics}</td>
               <td>{new Date(r.last_updated).toLocaleString()}</td>
             </tr>
           ))}

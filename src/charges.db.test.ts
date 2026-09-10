@@ -21,7 +21,7 @@ let admin: AdminActor;
  * The seed customer id in test-helpers is `cust-1`, which deliberately cannot form a DocNumber
  * (`RW-{code}-{id}` requires a numeric QuickBooks id). Posting tests therefore need a customer
  * that looks like a real QuickBooks one, so this adds a second participating customer with a
- * numeric id and points both seeded workers at it.
+ * numeric id and points both seeded mechanics at it.
  */
 const CUSTOMER = '58';
 
@@ -36,14 +36,14 @@ async function seedApprovableCustomer(): Promise<void> {
     CUSTOMER,
   ]);
   await pool.query(
-    'INSERT INTO assignments (worker_id, customer_qbo_id) VALUES ($1, $3), ($2, $3)',
-    [fx.workerAId, fx.workerBId, CUSTOMER]
+    'INSERT INTO assignments (mechanic_id, customer_qbo_id) VALUES ($1, $3), ($2, $3)',
+    [fx.mechanicAId, fx.mechanicBId, CUSTOMER]
   );
 }
 
-/** Records a part on a worker's tab through the real worker path, so tabs/statuses are real. */
-async function record(workerId: number, itemId: string, qty: number): Promise<void> {
-  const res = await setUsageQty({ workerId, eventId: fx.eventId, customerId: CUSTOMER, itemId, qty });
+/** Records a part on a mechanic's tab through the real mechanic path, so tabs/statuses are real. */
+async function record(mechanicId: number, itemId: string, qty: number): Promise<void> {
+  const res = await setUsageQty({ mechanicId, eventId: fx.eventId, customerId: CUSTOMER, itemId, qty });
   assert.equal(res.ok, true, `seed write failed: ${JSON.stringify(res)}`);
 }
 
@@ -94,7 +94,7 @@ function fakeQbo(opts: {
 
 async function statuses(): Promise<string[]> {
   const res = await pool.query<{ status: string }>(
-    `SELECT status FROM submissions WHERE event_id = $1 AND customer_qbo_id = $2 ORDER BY worker_id`,
+    `SELECT status FROM submissions WHERE event_id = $1 AND customer_qbo_id = $2 ORDER BY mechanic_id`,
     [fx.eventId, CUSTOMER]
   );
   return res.rows.map((r) => r.status);
@@ -141,10 +141,10 @@ after(async () => {
 // Approve
 // ---------------------------------------------------------------------------
 
-test('approve aggregates two workers\' tabs into one line per item', async (t) => {
+test('approve aggregates two mechanics\' tabs into one line per item', async (t) => {
   if (!dbAvailable) return t.skip();
-  await record(fx.workerAId, fx.itemId, 3);
-  await record(fx.workerBId, fx.itemId, 2);
+  await record(fx.mechanicAId, fx.itemId, 3);
+  await record(fx.mechanicBId, fx.itemId, 2);
 
   const result = await approveBatch({ eventId: fx.eventId, customerId: CUSTOMER, admin });
   assert.equal(result.ok, true);
@@ -162,16 +162,16 @@ test('approve aggregates two workers\' tabs into one line per item', async (t) =
 
 test('approve flips every tab to APPROVED and locks further writes', async (t) => {
   if (!dbAvailable) return t.skip();
-  await record(fx.workerAId, fx.itemId, 1);
-  await record(fx.workerBId, fx.itemId, 1);
+  await record(fx.mechanicAId, fx.itemId, 1);
+  await record(fx.mechanicBId, fx.itemId, 1);
 
   const approved = await approveBatch({ eventId: fx.eventId, customerId: CUSTOMER, admin });
   assert.ok(approved.ok);
   assert.deepEqual(await statuses(), ['APPROVED', 'APPROVED']);
 
-  // Both the worker with a tab and (via the participation probe) any worker without one.
+  // Both the mechanic with a tab and (via the participation probe) any mechanic without one.
   const blocked = await setUsageQty({
-    workerId: fx.workerAId,
+    mechanicId: fx.mechanicAId,
     eventId: fx.eventId,
     customerId: CUSTOMER,
     itemId: fx.itemId,
@@ -185,7 +185,7 @@ test('approve flips every tab to APPROVED and locks further writes', async (t) =
 
 test('every tab is stamped with the batch it was folded into', async (t) => {
   if (!dbAvailable) return t.skip();
-  await record(fx.workerAId, fx.itemId, 1);
+  await record(fx.mechanicAId, fx.itemId, 1);
   const approved = await approveBatch({ eventId: fx.eventId, customerId: CUSTOMER, admin });
   assert.ok(approved.ok);
   const res = await pool.query<{ charge_batch_id: number }>(
@@ -197,7 +197,7 @@ test('every tab is stamped with the batch it was folded into', async (t) => {
 
 test('a second approve is refused and leaves exactly one batch', async (t) => {
   if (!dbAvailable) return t.skip();
-  await record(fx.workerAId, fx.itemId, 1);
+  await record(fx.mechanicAId, fx.itemId, 1);
   assert.ok((await approveBatch({ eventId: fx.eventId, customerId: CUSTOMER, admin })).ok);
 
   const second = await approveBatch({ eventId: fx.eventId, customerId: CUSTOMER, admin });
@@ -211,7 +211,7 @@ test('a second approve is refused and leaves exactly one batch', async (t) => {
 
 test('concurrent approves: exactly one wins', async (t) => {
   if (!dbAvailable) return t.skip();
-  await record(fx.workerAId, fx.itemId, 1);
+  await record(fx.mechanicAId, fx.itemId, 1);
   const [a, b] = await Promise.all([
     approveBatch({ eventId: fx.eventId, customerId: CUSTOMER, admin }),
     approveBatch({ eventId: fx.eventId, customerId: CUSTOMER, admin }),
@@ -223,10 +223,10 @@ test('concurrent approves: exactly one wins', async (t) => {
 
 test('voided lines are excluded from the approved aggregate', async (t) => {
   if (!dbAvailable) return t.skip();
-  await record(fx.workerAId, fx.itemId, 4);
-  await record(fx.workerBId, fx.itemId, 6);
-  // Worker B changes their mind: qty 0 voids their line.
-  await record(fx.workerBId, fx.itemId, 0);
+  await record(fx.mechanicAId, fx.itemId, 4);
+  await record(fx.mechanicBId, fx.itemId, 6);
+  // Mechanic B changes their mind: qty 0 voids their line.
+  await record(fx.mechanicBId, fx.itemId, 0);
 
   const result = await approveBatch({ eventId: fx.eventId, customerId: CUSTOMER, admin });
   assert.ok(result.ok);
@@ -236,9 +236,9 @@ test('voided lines are excluded from the approved aggregate', async (t) => {
 
 test('distinct price snapshots for the same part become two invoice lines', async (t) => {
   if (!dbAvailable) return t.skip();
-  await record(fx.workerAId, fx.itemId, 2); // snapshots 9.50
+  await record(fx.mechanicAId, fx.itemId, 2); // snapshots 9.50
   await pool.query('UPDATE items SET unit_price = 11 WHERE qbo_id = $1', [fx.itemId]);
-  await record(fx.workerBId, fx.itemId, 3); // snapshots 11.00
+  await record(fx.mechanicBId, fx.itemId, 3); // snapshots 11.00
 
   const result = await approveBatch({ eventId: fx.eventId, customerId: CUSTOMER, admin });
   assert.ok(result.ok);
@@ -254,7 +254,7 @@ test('distinct price snapshots for the same part become two invoice lines', asyn
 
 test('a part that went inactive in QuickBooks refuses the whole batch, persisting nothing', async (t) => {
   if (!dbAvailable) return t.skip();
-  await record(fx.workerAId, fx.itemId, 2);
+  await record(fx.mechanicAId, fx.itemId, 2);
   // Rule 3: the part was sellable when recorded and is not any more.
   await pool.query('UPDATE items SET active = FALSE WHERE qbo_id = $1', [fx.itemId]);
 
@@ -283,7 +283,7 @@ test('a non-participating customer and a closed event are both refused', async (
     reason: 'not-participating',
   });
 
-  await record(fx.workerAId, fx.itemId, 1);
+  await record(fx.mechanicAId, fx.itemId, 1);
   await pool.query('UPDATE events SET closed_at = now() WHERE id = $1', [fx.eventId]);
   assert.deepEqual(await approveBatch({ eventId: fx.eventId, customerId: CUSTOMER, admin }), {
     ok: false,
@@ -295,7 +295,7 @@ test('a customer whose QuickBooks id cannot form a DocNumber is refused, not tru
   if (!dbAvailable) return t.skip();
   // fx.customerId is 'cust-1' — not a QuickBooks-shaped id.
   await setUsageQty({
-    workerId: fx.workerAId,
+    mechanicId: fx.mechanicAId,
     eventId: fx.eventId,
     customerId: fx.customerId,
     itemId: fx.itemId,
@@ -313,7 +313,7 @@ test('a customer whose QuickBooks id cannot form a DocNumber is refused, not tru
 
 /** Approve a small batch and return its id — the starting point for every posting test. */
 async function approved(): Promise<number> {
-  await record(fx.workerAId, fx.itemId, 2);
+  await record(fx.mechanicAId, fx.itemId, 2);
   const result = await approveBatch({ eventId: fx.eventId, customerId: CUSTOMER, admin });
   assert.ok(result.ok);
   return result.batchId;
@@ -533,8 +533,8 @@ test('an invoice QuickBooks renamed is still recorded, flagged as a DocNumber mi
 
 test('un-approve restores SUBMITTED tabs, deletes the batch, and snapshots the aggregate', async (t) => {
   if (!dbAvailable) return t.skip();
-  await record(fx.workerAId, fx.itemId, 2);
-  await record(fx.workerBId, fx.itemId, 1);
+  await record(fx.mechanicAId, fx.itemId, 2);
+  await record(fx.mechanicBId, fx.itemId, 1);
   const result = await approveBatch({ eventId: fx.eventId, customerId: CUSTOMER, admin });
   assert.ok(result.ok);
 
@@ -559,7 +559,7 @@ test('un-approve restores SUBMITTED tabs, deletes the batch, and snapshots the a
 
   // And the customer is editable again.
   const write = await setUsageQty({
-    workerId: fx.workerAId,
+    mechanicId: fx.mechanicAId,
     eventId: fx.eventId,
     customerId: CUSTOMER,
     itemId: fx.itemId,

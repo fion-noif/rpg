@@ -229,7 +229,7 @@ body {
 }
 
 /* Admin (owner/manager) surfaces. Desktop-tolerant, same zinc palette as the
-   worker UI. English-only — src/i18n.ts stays worker-facing. */
+   mechanic UI. English-only — src/i18n.ts stays mechanic-facing. */
 
 .admin-wrap {
   max-width: 960px;
@@ -666,7 +666,7 @@ body {
 /* Manager-only service lines on the §17 review page (owner's decision 09/06/2026).
    Services are billed per race day rather than per unit, so everything here exists to make
    that unit visible: a tag on the line, a "/day" suffix on the price, and a labelled Days
-   input on the separate add-service control. Workers never render any of this. */
+   input on the separate add-service control. Mechanics never render any of this. */
 .admin-tag {
   display: inline-block;
   margin-left: 8px;
@@ -712,7 +712,7 @@ body {
    Tab bar, the persistent event header, the customer filter row, and the
    per-customer assign disclosure.
 
-   Deliberately NOT reusing .customer-tabs (line 47): that is the worker app's
+   Deliberately NOT reusing .customer-tabs (line 47): that is the mechanic app's
    mobile segmented control — flex:1 equal-width pills, 16px type, sized for a
    480px .wrap. This is a desktop underline tab bar in a 960px .admin-wrap.
    Only the `.active`-style convention carries over.
@@ -814,7 +814,7 @@ body {
   overflow-wrap: anywhere;
 }
 
-/* The assigned-worker names, above the "+ Assign" toggle in the same cell. */
+/* The assigned-mechanic names, above the "+ Assign" toggle in the same cell. */
 .admin-assigned {
   margin-bottom: 4px;
 }

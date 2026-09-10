@@ -46,7 +46,7 @@ const ALPHABET = 'abcdefghjkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 
 /**
  * A one-time password for a newly created or reset account, ~71 bits at 12 characters.
- * Same discipline as the worker magic-link token (src/workers.ts newToken): generated from
+ * Same discipline as the mechanic magic-link token (src/mechanics.ts newToken): generated from
  * `randomBytes`, shown exactly once, never placed in a URL.
  *
  * Rejection sampling rather than `% ALPHABET.length`, which would bias the first few

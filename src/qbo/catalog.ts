@@ -28,7 +28,7 @@ export function isValidSku(sku: string): boolean {
 
 /**
  * The `English Name - Nombre Español` convention (design doc §10). A single separator
- * so a worker in either language finds the same row with one substring match, and so the
+ * so a mechanic in either language finds the same row with one substring match, and so the
  * bilingual text is what the customer sees on the QuickBooks invoice.
  */
 export function bilingualName(english: string, spanish: string): string {
@@ -45,7 +45,7 @@ export type NameCheck =
  *
  * Fails loudly rather than truncating: a silently clipped name loses the Spanish half, which
  * is precisely the half §12.2 search depends on, and the loss would only surface as "the
- * Spanish-speaking worker can't find the part" weeks later.
+ * Spanish-speaking mechanic can't find the part" weeks later.
  */
 export function checkBilingualName(english: string, spanish: string): NameCheck {
   const en = english.trim();

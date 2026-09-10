@@ -182,7 +182,7 @@ Aurora is not in either script because it manages itself: min capacity 0 means i
 ~30 minutes after the last query and resumes on the next one (~15 s, paid once by whoever
 opens the site Thursday before the race). Run `resume.sh` the day *before* a weekend — the
 first resume after a long pause is when anything rotten surfaces, and Thursday leaves time
-to care. Worker links from past events are dead during a pause anyway: link expiry derives
+to care. Mechanic links from past events are dead during a pause anyway: link expiry derives
 from event end dates.
 
 Roughly: paused ≈ **$5/mo** (Aurora storage + S3 + ECR), an active month ≈ **$40–60**
@@ -205,7 +205,7 @@ the newest dump, restores it into a throwaway local container, and prints the ro
 the tables that matter. Run it after the first real backup, then before each season.
 
 The truly irreplaceable tables are `submissions`, `submission_lines`, `admin_actions`,
-`events`, `workers`, `charge_batches` — billing history and audit trail. `customers`/`items`
+`events`, `mechanics`, `charge_batches` — billing history and audit trail. `customers`/`items`
 re-sync from QuickBooks, and posted invoices live in QuickBooks itself.
 
 ## Secrets

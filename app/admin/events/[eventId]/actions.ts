@@ -3,7 +3,7 @@
 // Mutations for the event detail page (plan §7).
 //
 // WHY SERVER ACTIONS HERE, when every other mutation in this app is a route handler:
-// adding a worker mints a magic-link token that must be shown to the manager exactly once
+// adding a mechanic mints a magic-link token that must be shown to the manager exactly once
 // and must never appear in a URL — a 303 back with `?linkToken=…` would leak a live
 // credential into browser history, the Referer header, and any screen share of the address
 // bar. A Server Action can hand the token straight back as a return value, which the small
@@ -24,14 +24,14 @@ import { checkAdminPage, requireAdminPage } from '@/src/admin-page-auth';
 import type { AdminSession } from '@/src/admin-session';
 import {
   addCustomer,
-  addWorkerAndAssign,
-  addWorkerToEvent,
+  addMechanicAndAssign,
+  addMechanicToEvent,
   assign,
   closeEvent,
-  listWorkers,
+  listMechanics,
   removeCustomer,
-  removeWorkerFromEvent,
-  rotateWorkerToken,
+  removeMechanicFromEvent,
+  rotateMechanicToken,
   unassign,
   updateEventDates,
 } from '@/src/admin/events';
@@ -56,8 +56,8 @@ function str(form: FormData, key: string): string {
  * `error` reason (which this file produces), the tab arrives from the browser. `undefined`
  * for the default tab, so the common case still redirects to a bare URL.
  */
-function tabOf(form: FormData): 'workers' | undefined {
-  return form.get('tab') === 'workers' ? 'workers' : undefined;
+function tabOf(form: FormData): 'mechanics' | undefined {
+  return form.get('tab') === 'mechanics' ? 'mechanics' : undefined;
 }
 
 /**
@@ -65,11 +65,11 @@ function tabOf(form: FormData): 'workers' | undefined {
  * a machine-readable `?error=` the page turns into a sentence. Reasons are enum-ish strings,
  * never user input, so they are safe in a URL (unlike a token).
  *
- * The tab has to survive the round trip. Now that Workers is a separate panel rather than a
+ * The tab has to survive the round trip. Now that Mechanics is a separate panel rather than a
  * section further down the same page, a redirect that dropped it would answer "unassign this
  * customer" by throwing the manager back to the Customers tab.
  */
-function finish(eventId: number, reason?: string, tab?: 'workers'): never {
+function finish(eventId: number, reason?: string, tab?: 'mechanics'): never {
   revalidatePath(`/admin/events/${eventId}`);
   const qs = new URLSearchParams();
   if (tab) qs.set('tab', tab);
@@ -94,26 +94,26 @@ export async function removeCustomerAction(form: FormData): Promise<never> {
 
 export async function assignAction(form: FormData): Promise<never> {
   const admin = await requireAdminAction();
-  const result = await assign(num(form, 'workerId'), str(form, 'customerQboId'), admin);
+  const result = await assign(num(form, 'mechanicId'), str(form, 'customerQboId'), admin);
   finish(num(form, 'eventId'), result.ok ? undefined : result.reason, tabOf(form));
 }
 
 export async function unassignAction(form: FormData): Promise<never> {
   const admin = await requireAdminAction();
-  const result = await unassign(num(form, 'workerId'), str(form, 'customerQboId'), admin);
+  const result = await unassign(num(form, 'mechanicId'), str(form, 'customerQboId'), admin);
   finish(num(form, 'eventId'), result.ok ? undefined : result.reason, tabOf(form));
 }
 
-export async function removeWorkerAction(form: FormData): Promise<never> {
+export async function removeMechanicAction(form: FormData): Promise<never> {
   const admin = await requireAdminAction();
-  const result = await removeWorkerFromEvent(num(form, 'workerId'), admin);
+  const result = await removeMechanicFromEvent(num(form, 'mechanicId'), admin);
   finish(num(form, 'eventId'), result.ok ? undefined : result.reason, tabOf(form));
 }
 
 /**
  * Moving the weekend's dates. Worth knowing while reading this page: this is the *only*
- * remedy for a weekend that ran past its end date, because worker link expiry is derived
- * from that date (src/workers.ts) — rotating a worker's link re-derives the same dead
+ * remedy for a weekend that ran past its end date, because mechanic link expiry is derived
+ * from that date (src/mechanics.ts) — rotating a mechanic's link re-derives the same dead
  * expiry, so extending the event is what restores access.
  */
 export async function updateEventDatesAction(form: FormData): Promise<never> {
@@ -182,7 +182,7 @@ async function withQr<T extends LinkState>(state: T): Promise<T> {
  * already on the event (a plain assignment, no credential) and `s:` for someone who has
  * worked before (add + assign, which mints one).
  */
-export async function assignWorkerAction(_prev: AssignState, form: FormData): Promise<AssignState> {
+export async function assignMechanicAction(_prev: AssignState, form: FormData): Promise<AssignState> {
   const check = await checkAdminPage();
   if (!check.ok || check.via !== 'cookie') return { error: 'not-signed-in' };
 
@@ -201,10 +201,10 @@ export async function assignWorkerAction(_prev: AssignState, form: FormData): Pr
       link: result.link ?? undefined,
     });
 
-  // Same precedence as addWorkerAction: a typed name beats the picker, because filling it in
+  // Same precedence as addMechanicAction: a typed name beats the picker, because filling it in
   // is the more deliberate act.
   if (newName) {
-    const result = await addWorkerAndAssign(
+    const result = await addMechanicAndAssign(
       { eventId, newStaff: { name: newName, language: str(form, 'language') === 'es' ? 'es' : 'en' } },
       customerQboId,
       check.admin
@@ -214,7 +214,7 @@ export async function assignWorkerAction(_prev: AssignState, form: FormData): Pr
   }
 
   if (who.startsWith('s:')) {
-    const result = await addWorkerAndAssign(
+    const result = await addMechanicAndAssign(
       { eventId, staffId: Number(who.slice(2)) },
       customerQboId,
       check.admin
@@ -224,23 +224,23 @@ export async function assignWorkerAction(_prev: AssignState, form: FormData): Pr
   }
 
   if (who.startsWith('w:')) {
-    const workerId = Number(who.slice(2));
-    const result = await assign(workerId, customerQboId, check.admin);
+    const mechanicId = Number(who.slice(2));
+    const result = await assign(mechanicId, customerQboId, check.admin);
     revalidatePath(`/admin/events/${eventId}`);
     if (!result.ok) return { error: result.reason };
     // The name is read back rather than carried in a hidden field: a plain <select> cannot
     // submit the label of the chosen option, and the alternative — packing the name into the
     // option value — would put a display string where an id belongs.
-    const worker = (await listWorkers(eventId)).find((w) => w.id === workerId);
+    const mechanic = (await listMechanics(eventId)).find((w) => w.id === mechanicId);
     // Already on the event, so there is no new credential — the panel says their existing
     // link still works rather than showing a link box.
-    return { assignedTo: customerName, name: worker?.name ?? 'That worker', link: undefined };
+    return { assignedTo: customerName, name: mechanic?.name ?? 'That mechanic', link: undefined };
   }
 
   return { error: 'invalid-name' };
 }
 
-export async function addWorkerAction(_prev: LinkState, form: FormData): Promise<LinkState> {
+export async function addMechanicAction(_prev: LinkState, form: FormData): Promise<LinkState> {
   // These two return a value instead of redirecting, so they report "not signed in" as state
   // rather than bouncing — the caller is a form the user is standing in front of.
   const check = await checkAdminPage();
@@ -253,7 +253,7 @@ export async function addWorkerAction(_prev: LinkState, form: FormData): Promise
   // The form offers both a picker and a new-name box; a typed name wins, because filling it
   // in is the more deliberate act.
   const result = newName
-    ? await addWorkerToEvent(
+    ? await addMechanicToEvent(
         {
           eventId,
           newStaff: { name: newName, language: str(form, 'language') === 'es' ? 'es' : 'en' },
@@ -261,7 +261,7 @@ export async function addWorkerAction(_prev: LinkState, form: FormData): Promise
         check.admin
       )
     : staffId
-      ? await addWorkerToEvent({ eventId, staffId: Number(staffId) }, check.admin)
+      ? await addMechanicToEvent({ eventId, staffId: Number(staffId) }, check.admin)
       : ({ ok: false, reason: 'invalid-name' } as const);
 
   revalidatePath(`/admin/events/${eventId}`);
@@ -275,8 +275,8 @@ export async function rotateTokenAction(_prev: LinkState, form: FormData): Promi
   const check = await checkAdminPage();
   if (!check.ok || check.via !== 'cookie') return { error: 'not-signed-in' };
 
-  const result = await rotateWorkerToken(num(form, 'workerId'), check.admin);
+  const result = await rotateMechanicToken(num(form, 'mechanicId'), check.admin);
   revalidatePath(`/admin/events/${num(form, 'eventId')}`);
   if (!result.ok) return { error: result.reason };
-  return withQr({ link: result.link, name: str(form, 'workerName') });
+  return withQr({ link: result.link, name: str(form, 'mechanicName') });
 }

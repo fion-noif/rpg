@@ -1,6 +1,15 @@
 # Racing Parts Cost Entry & QuickBooks Integration Plan
 
-> **[08/08/2026] Design review update.** Reviewed alternatives (QBO restricted users, off-the-shelf field-service tools, low-code, POS+sync) — custom app confirmed, because the differentiator is the event-scoped worker→customer authorization model. Key decisions folded into the sections below: (1) post **draft Invoices** — Delayed Charge is not exposed by the QuickBooks API; (2) concrete idempotency via deterministic DocNumber + query-before-create; (3) **CDC polling instead of webhooks**; (4) catalog search runs **client-side on the phone**; (5) simplified submission state machine; (6) magic-link worker auth. Implementation milestones added in Section 30.
+> **[08/08/2026] Design review update.** Reviewed alternatives (QBO restricted users, off-the-shelf field-service tools, low-code, POS+sync) — custom app confirmed, because the differentiator is the event-scoped mechanic→customer authorization model. Key decisions folded into the sections below: (1) post **draft Invoices** — Delayed Charge is not exposed by the QuickBooks API; (2) concrete idempotency via deterministic DocNumber + query-before-create; (3) **CDC polling instead of webhooks**; (4) catalog search runs **client-side on the phone**; (5) simplified submission state machine; (6) magic-link mechanic auth. Implementation milestones added in Section 30.
+
+> **[09/09/2026] Rename: worker → mechanic.** The people recording parts are called
+> **mechanics** throughout the app, the database (`mechanics`, `mechanic_id`), the UI, and
+> this document — the word the paddock actually uses. This document was rewritten in place
+> rather than annotated, so earlier sections read "mechanic" even where they were written
+> before the rename. Two deliberate exceptions: the session cookie stays `rw_session`
+> (renaming it would sign out every mechanic mid-weekend for no gain), and the QuickBooks
+> service item **"Mechanic (per day)"** is unrelated to it — that is a day of labour being
+> billed, not a person, and §8 still hides it from mechanics. See `src/catalog.ts`.
 
 ## 1. Background
 
@@ -10,10 +19,10 @@ to manage its accounting, customers, and parts/products.
 During a typical race weekend:
 
 -   There may be approximately **10--50 customers**.
--   There may be approximately **10--50 workers**.
--   Each worker normally supports **one customer**, or at most **two
+-   There may be approximately **10--50 mechanics**.
+-   Each mechanic normally supports **one customer**, or at most **two
     customers**.
--   Workers need to record kart parts consumed by their assigned
+-   Mechanics need to record kart parts consumed by their assigned
     customers, such as:
     -   Axles
     -   Tires
@@ -22,22 +31,22 @@ During a typical race weekend:
     -   Brake components
     -   Bodywork
     -   Other kart parts
--   Some workers speak English and some speak Spanish.
--   The parts catalog is relatively large, so workers need fast search
+-   Some mechanics speak English and some speak Spanish.
+-   The parts catalog is relatively large, so mechanics need fast search
     rather than browsing a long list.
 -   Frequently used parts should be immediately accessible.
--   Workers should not have access to the company's broader QuickBooks
+-   Mechanics should not have access to the company's broader QuickBooks
     information.
--   Workers should not need to browse the complete historical customer
+-   Mechanics should not need to browse the complete historical customer
     list.
 -   QuickBooks should remain the authoritative source for customers and
     the parts catalog so that duplicate master data does not drift over
     time.
 
 The proposed solution is therefore a **custom, mobile-friendly web
-application** that sits between race workers and QuickBooks.
+application** that sits between race mechanics and QuickBooks.
 
-Workers do not log in to QuickBooks. They interact only with the racing
+Mechanics do not log in to QuickBooks. They interact only with the racing
 application.
 
 ------------------------------------------------------------------------
@@ -46,15 +55,15 @@ application.
 
 The system should:
 
-1.  Let a worker record a part used for a customer in a few seconds.
-2.  Restrict each worker to the one or two customers assigned to them
+1.  Let a mechanic record a part used for a customer in a few seconds.
+2.  Restrict each mechanic to the one or two customers assigned to them
     for that race weekend.
-3.  Support English- and Spanish-speaking workers.
+3.  Support English- and Spanish-speaking mechanics.
 4.  Make a large parts catalog easy to search.
 5.  Put frequently used parts at the top of the interface.
 6.  Keep QuickBooks as the single source of truth for customers and
     parts.
-7.  Prevent workers from seeing accounting information, historical
+7.  Prevent mechanics from seeing accounting information, historical
     customers, bank information, reports, payroll, or other sensitive
     QuickBooks data.
 8.  Allow management to review and correct submitted parts usage.
@@ -87,11 +96,11 @@ of this information.
 The custom application owns information specific to race operations,
 including:
 
--   Workers
--   Worker authentication
--   Worker language preference
+-   Mechanics
+-   Mechanic authentication
+-   Mechanic language preference
 -   Race weekends/events
--   Worker-to-customer assignments
+-   Mechanic-to-customer assignments
 -   Parts usage
 -   Submission timestamps
 -   Submission status
@@ -135,7 +144,7 @@ This creates a clear ownership boundary and prevents master-data drift.
                   Prices
 
               App-owned:
-                  Workers
+                  Mechanics
                   Race weekends
                   Assignments
                   Part popularity
@@ -147,10 +156,10 @@ This creates a clear ownership boundary and prevents master-data drift.
              ┌───────────┴───────────┐
              ▼                       ▼
 
-        WORKER APP                 ADMIN APP
+       MECHANIC APP                ADMIN APP
 
      Assigned customers          Weekend setup
-     Popular parts               Assign workers
+     Popular parts               Assign mechanics
      Parts search                Review usage
      Add quantities              Correct entries
      Submit usage                Approve/post
@@ -166,20 +175,20 @@ This creates a clear ownership boundary and prevents master-data drift.
 
 ------------------------------------------------------------------------
 
-## 5. Why Workers Should Not Use QuickBooks Directly
+## 5. Why Mechanics Should Not Use QuickBooks Directly
 
-Giving 10--50 race workers QuickBooks accounts creates several problems:
+Giving 10--50 race mechanics QuickBooks accounts creates several problems:
 
 -   QuickBooks permissions are broader than this workflow requires.
 -   Customer visibility is difficult to restrict precisely to one or two
     assigned customers.
--   Workers could potentially see customer or accounting information
+-   Mechanics could potentially see customer or accounting information
     they do not need.
 -   Managing dozens of QuickBooks users every weekend would create
     unnecessary administration.
 -   QuickBooks transaction-entry screens are not optimized for rapid
     parts consumption at a racetrack.
--   The worker's task is operational, not bookkeeping.
+-   The mechanic's task is operational, not bookkeeping.
 
 A purpose-built interface can expose only the exact information
 necessary to perform the task.
@@ -188,9 +197,9 @@ necessary to perform the task.
 
 ## 6. User Roles
 
-### 6.1 Worker
+### 6.1 Mechanic
 
-A worker can:
+A mechanic can:
 
 -   Log in to the racing application.
 -   Select English or Spanish.
@@ -201,7 +210,7 @@ A worker can:
 -   Review their current submission.
 -   Submit parts usage.
 
-A worker cannot:
+A mechanic cannot:
 
 -   Access QuickBooks.
 -   View the full customer database.
@@ -219,7 +228,7 @@ A worker cannot:
 An administrator can:
 
 -   Create/configure a race weekend.
--   Assign workers to customers.
+-   Assign mechanics to customers.
 -   View all current-weekend customers.
 -   Review submitted parts usage.
 -   Correct errors.
@@ -249,15 +258,15 @@ August 8–9, 2026
 Customers:
 42
 
-Workers:
+Mechanics:
 37
 ```
 
-Worker assignments belong to the event rather than being permanent.
+Mechanic assignments belong to the event rather than being permanent.
 
 Example:
 
-  Worker   Assigned Customer(s)
+  Mechanic   Assigned Customer(s)
   -------- ----------------------------
   Mike     Smith Racing
   Carlos   Garcia Racing
@@ -273,7 +282,7 @@ master customer records.
 
 Customer access should follow the principle of least privilege.
 
-### Worker with one customer
+### Mechanic with one customer
 
 If Mike is assigned only to Smith Racing, the app should simply show:
 
@@ -285,7 +294,7 @@ No customer picker is necessary.
 
 Mike should not see any other customers.
 
-### Worker with two customers
+### Mechanic with two customers
 
 If Alex supports Miller Racing and Chen Racing:
 
@@ -301,7 +310,7 @@ Only those two customers should be visible.
 
 Administrators can see all customers participating in the event.
 
-This is preferable to letting workers browse all 10--50 weekend
+This is preferable to letting mechanics browse all 10--50 weekend
 customers, and substantially preferable to exposing the complete
 historical QuickBooks customer database.
 
@@ -416,26 +425,26 @@ clearer name on an invoice line.
 **Visibility (Section 8, least privilege).** One rule, defined once, and
 applied to both the reads and the writes:
 
--   *Worker-visible:* `active AND sku IS NOT NULL AND (category IS NULL
-    OR category NOT IN (<manager-only>))`. A worker records what they
+-   *Mechanic-visible:* `active AND sku IS NOT NULL AND (category IS NULL
+    OR category NOT IN (<manager-only>))`. A mechanic records what they
     fitted to a kart; they cannot know how many days of mechanic time to
     bill, and an accidental tap must not be a $450 line.
--   *Manager-visible:* the union of worker-visible and manager-only —
+-   *Manager-visible:* the union of mechanic-visible and manager-only —
     parts **plus** services.
 
 The `sku IS NOT NULL` clause is belt-and-braces. Every real part carries
 a SKU (Section 9/10), so it costs nothing; what it buys is that the two
-undeletable stock items `Services` and `Hours` stay off workers' phones
+undeletable stock items `Services` and `Hours` stay off mechanics' phones
 even if re-parenting them under `Race Services` is ever refused, because
 they have no SKU and never will. An unclassified item therefore defaults
-to "hidden from workers", which is the safe default for a screen where
+to "hidden from mechanics", which is the safe default for a screen where
 every tap is a charge.
 
 Critically, the rule is enforced on the **write** path and not only in
 the picker: hiding a row from a dropdown is presentation, and
-presentation is not authorisation. A worker who guesses or replays a
+presentation is not authorisation. A mechanic who guesses or replays a
 service item's QuickBooks id is refused in the transaction, with the
-same `unknown-item` reason an unknown id gets — from the worker's side
+same `unknown-item` reason an unknown id gets — from the mechanic's side
 that is the whole truth, and a distinct reason would only confirm to a
 prober that the id was real.
 
@@ -473,7 +482,7 @@ Benefits:
 -   No translation synchronization problem.
 -   Both English and Spanish terms are searchable.
 -   Administrators control terminology directly in QuickBooks.
--   Workers in either language can identify the same SKU.
+-   Mechanics in either language can identify the same SKU.
 
 The SKU should remain the permanent technical identifier.
 
@@ -514,14 +523,14 @@ Example interface strings:
 These are a relatively small set of application strings and can be
 maintained directly in the application code.
 
-A worker's language preference can be stored in their profile and
+A mechanic's language preference can be stored in their profile and
 changed from the interface.
 
 ------------------------------------------------------------------------
 
 ## 12. Parts Search
 
-Because the catalog may be large, workers should not primarily use a
+Because the catalog may be large, mechanics should not primarily use a
 conventional dropdown.
 
 The interface should provide three primary ways to find parts.
@@ -550,7 +559,7 @@ not need to be stored in QuickBooks.
 
 ### 12.2 Search
 
-Workers should be able to type any part of:
+Mechanics should be able to type any part of:
 
 -   SKU
 -   English name
@@ -577,7 +586,7 @@ Search should be:
 
 **Implementation decision (08/08/2026):** at this catalog scale
 (hundreds to low thousands of items), the full active catalog is small
-enough to ship to the worker's phone on page load and search entirely
+enough to ship to the mechanic's phone on page load and search entirely
 **client-side** with accent-folding. This gives instant zero-latency
 search, keeps working through flaky track Wi-Fi (the catalog is already
 on the device), and removes a server-side search endpoint from V1.
@@ -609,7 +618,7 @@ Barcode or QR scanning is a useful future enhancement.
 
 A barcode or QR code can correspond to the QuickBooks SKU.
 
-A worker could:
+A mechanic could:
 
 1.  Pick up a part.
 2.  Scan its barcode.
@@ -638,25 +647,25 @@ It is not required for the first version.
 
 ------------------------------------------------------------------------
 
-## 14. Worker Interface
+## 14. Mechanic Interface
 
-The worker application should be optimized for phones.
+The mechanic application should be optimized for phones.
 
 ### Login
 
 **Decision (08/08/2026): magic links / QR codes generated by the
-administrator, per worker per event.** No passwords. The admin creates a
-worker for the weekend and hands them a link or QR code containing a
-signed, event-scoped token; the link logs the worker in on their phone
+administrator, per mechanic per event.** No passwords. The admin creates a
+mechanic for the weekend and hands them a link or QR code containing a
+signed, event-scoped token; the link logs the mechanic in on their phone
 for the duration of the event and is individually revocable. A short PIN
 can be added later as a fallback if links prove awkward trackside.
 
 Alternatives considered: phone number + SMS (adds cost and a delivery
 dependency at tracks with poor signal), username/password (too much
-friction for 10–50 seasonal workers).
+friction for 10–50 seasonal mechanics).
 
 The goal is to minimize authentication friction while still
-ensuring that a worker can access only their own assignments.
+ensuring that a mechanic can access only their own assignments.
 
 ### Main Screen
 
@@ -702,7 +711,7 @@ Other / Otros
 
 ## 15. Cart-Based Entry
 
-Rather than creating a transaction immediately every time a worker taps
+Rather than creating a transaction immediately every time a mechanic taps
 a part, the app should use a cart-like workflow.
 
 Example:
@@ -731,15 +740,15 @@ MG Yellow Tires
 
 Benefits:
 
--   Worker can catch mistakes before submission.
+-   Mechanic can catch mistakes before submission.
 -   Multiple parts can be submitted together.
 -   Quantity changes are easy.
 -   The interface is familiar.
 -   Fewer incomplete or accidental transactions are generated.
 
-Whether workers see customer prices can be configurable.
+Whether mechanics see customer prices can be configurable.
 
-For many workers, showing only part and quantity may be preferable.
+For many mechanics, showing only part and quantity may be preferable.
 
 ------------------------------------------------------------------------
 
@@ -751,7 +760,7 @@ A parts usage record should contain at least:
 Event ID
 Customer ID
 QuickBooks Customer ID
-Worker ID
+Mechanic ID
 Part ID
 QuickBooks Item ID
 SKU
@@ -811,7 +820,7 @@ Management can:
 -   Add a missing part.
 -   **Add a service line** — team support, mechanic, engine lease — in
     whole days (added 09/06/2026; see Section 9.2). This is manager-only
-    and is the *only* way a service reaches an invoice: workers never
+    and is the *only* way a service reaches an invoice: mechanics never
     see these items. It reuses the same add-line path as a part, so a
     service line is voided, re-quantified, attributed and audited
     exactly like everything else on the tab. It is presented as a
@@ -891,7 +900,7 @@ workflow (Section 17) and provides a natural idempotency anchor
 The application should maintain a local cached copy of relevant
 QuickBooks data.
 
-It should **not query QuickBooks every time a worker searches for a
+It should **not query QuickBooks every time a mechanic searches for a
 part**.
 
 Architecture:
@@ -905,7 +914,7 @@ Racing App Database
     │
     │ fast local query
     ▼
-Worker's Phone
+Mechanic's Phone
 ```
 
 Benefits:
@@ -963,7 +972,7 @@ Then:
 2.  The racing application detects the change automatically, or an
     administrator selects **Sync QuickBooks**.
 3.  The part appears in the racing app.
-4.  Workers can immediately search for `AX50-X`, `axle`, `eje`,
+4.  Mechanics can immediately search for `AX50-X`, `axle`, `eje`,
     `extra soft`, etc.
 
 The part should not need to be separately recreated in the racing app.
@@ -985,9 +994,9 @@ Customer appears in admin app
         ↓
 Add customer to race weekend
         ↓
-Assign worker(s)
+Assign mechanic(s)
         ↓
-Only assigned worker(s) see customer
+Only assigned mechanic(s) see customer
 ```
 
 This preserves QuickBooks as the customer master.
@@ -1007,11 +1016,11 @@ This preserves QuickBooks as the customer master.
   English/Spanish part description   QuickBooks
   Sales price                        QuickBooks
   Part category                      QuickBooks
-  Worker                             Racing app
-  Worker language                    Racing app
+  Mechanic                             Racing app
+  Mechanic language                    Racing app
   Race weekend                       Racing app
   Weekend customer participation     Racing app
-  Worker/customer assignment         Racing app
+  Mechanic/customer assignment         Racing app
   Part popularity                    Racing app
   Parts usage                        Racing app
   Approval state                     Racing app
@@ -1043,9 +1052,9 @@ it rather than automatically creating a replacement.
 
 ### Rule 4 --- Preserve transaction audit history
 
-After a worker submits usage, the system should preserve:
+After a mechanic submits usage, the system should preserve:
 
--   Original worker
+-   Original mechanic
 -   Original timestamp
 -   Original quantity
 -   Manager corrections
@@ -1065,8 +1074,8 @@ accounts now:
     of what this rule asks for.
 3.  Attribution flows through `staff.admin_id`: each admin owns one `staff`
     row bearing their real name, and the per-event synthetic
-    `workers.is_admin` row hangs off it. Every reader (worker screens,
-    review page, CSV export) already reads `workers.name`, so nothing
+    `mechanics.is_admin` row hangs off it. Every reader (mechanic screens,
+    review page, CSV export) already reads `mechanics.name`, so nothing
     downstream changed shape — the name just became real.
 4.  Consequence for the auth model: `?secret=` (a bearer token with no
     identity) is accepted only on the read-only script endpoints. A mutation
@@ -1103,7 +1112,7 @@ query, never a duplicate charge.
 Racetracks can have unreliable internet connectivity.
 
 Because the team already relies on mobile/trackside networking, the
-worker workflow should not depend on a live QuickBooks API call for
+mechanic workflow should not depend on a live QuickBooks API call for
 every action.
 
 At minimum:
@@ -1114,7 +1123,7 @@ At minimum:
 -   Submitted usage should be stored safely before attempting QuickBooks
     posting.
 -   QuickBooks posting should be retryable.
--   Temporary QuickBooks outages should not prevent workers from
+-   Temporary QuickBooks outages should not prevent mechanics from
     recording usage.
 
 A later version could add progressive-web-app/offline capabilities if
@@ -1128,10 +1137,10 @@ Version 1 should remain intentionally focused.
 
 ### Include
 
-1.  Worker authentication
+1.  Mechanic authentication
 2.  English/Spanish application interface
 3.  Race weekend/event management
-4.  Worker-to-customer assignment
+4.  Mechanic-to-customer assignment
 5.  QuickBooks customer synchronization
 6.  QuickBooks Products & Services synchronization
 7.  Bilingual part names supplied by QuickBooks
@@ -1188,7 +1197,7 @@ Team
   │     │     ├── Labor
   │     │     └── Charges
   │     │
-  │     └── Workers
+  │     └── Mechanics
   │
   ├── Parts
   ├── Setup Data
@@ -1226,8 +1235,8 @@ Use QuickBooks for:
 Use the custom application for:
 
 -   Race weekends
--   Workers
--   Worker permissions
+-   Mechanics
+-   Mechanic permissions
 -   Customer assignments
 -   English/Spanish UI
 -   Parts search
@@ -1238,9 +1247,9 @@ Use the custom application for:
 -   Approval
 -   QuickBooks synchronization
 
-### Worker Experience
+### Mechanic Experience
 
-The worker's experience should be approximately:
+The mechanic's experience should be approximately:
 
 ``` text
 Login
@@ -1265,7 +1274,7 @@ A normal parts entry should take only a few seconds.
 ## 28. Key Design Decisions Agreed So Far
 
 1.  Build a custom web application rather than exposing QuickBooks
-    directly to workers.
+    directly to mechanics.
 2.  QuickBooks remains the authoritative customer database.
 3.  QuickBooks Products & Services remains the authoritative parts
     catalog.
@@ -1273,9 +1282,9 @@ A normal parts entry should take only a few seconds.
     quantity-on-hand inventory management is not currently required.
 5.  Customer and parts master data flow from QuickBooks to the custom
     app.
-6.  Workers do not receive QuickBooks accounts.
-7.  Workers see only the one or two customers assigned to them.
-8.  Worker/customer assignments are event-specific.
+6.  Mechanics do not receive QuickBooks accounts.
+7.  Mechanics see only the one or two customers assigned to them.
+8.  Mechanic/customer assignments are event-specific.
 9.  The app supports English and Spanish.
 10. Part names/descriptions can contain both languages directly in
     QuickBooks, such as `Axle N - Eje N`.
@@ -1286,7 +1295,7 @@ A normal parts entry should take only a few seconds.
     searching.
 15. Administrators should have a manual QuickBooks synchronization
     option.
-16. Workers submit parts usage to the racing application first.
+16. Mechanics submit parts usage to the racing application first.
 17. Management can review/correct usage before it is posted to
     QuickBooks.
 18. The system should maintain an audit trail.
@@ -1305,9 +1314,9 @@ Added 08/08/2026:
     webhooks, no automatic polling (revised 08/09/2026 — master data
     seldom changes during a weekend; CDC polling stays available as a
     cheap retrofit if ever needed).
-24. Parts search runs client-side on the worker's phone against the
+24. Parts search runs client-side on the mechanic's phone against the
     synced catalog.
-25. Worker authentication uses admin-generated, event-scoped magic
+25. Mechanic authentication uses admin-generated, event-scoped magic
     links / QR codes.
 26. Submission states simplified to
     `SUBMITTED → APPROVED → POSTED_TO_QUICKBOOKS` with `POST_FAILED`.
@@ -1324,8 +1333,8 @@ Added 09/06/2026 (owner's decisions):
     See Section 9.1.
 29. **Invoices may include service lines, billed in whole days.** Team
     support, mechanic and engine lease. Service items are identified by
-    a QuickBooks **category** (`Race Services`), are hidden from workers
-    (Section 8 least privilege — workers record physical parts only),
+    a QuickBooks **category** (`Race Services`), are hidden from mechanics
+    (Section 8 least privilege — mechanics record physical parts only),
     and are addable by managers during review (Section 17). QuickBooks
     remains the classification source of truth (Rule 2). See
     Section 9.2.
@@ -1342,7 +1351,7 @@ Before implementation, the next technical design phase should define:
 -   Database schema
 -   Synchronization algorithm
 -   Webhook/change-detection strategy
--   Worker authentication mechanism
+-   Mechanic authentication mechanism
 -   Authorization rules
 -   Admin workflow
 -   Search/indexing implementation
@@ -1359,7 +1368,7 @@ specification and development plan.
 
 Of the list above, the following are now decided (08/08/2026):
 transaction type (draft Invoice per customer per event), change
-detection (CDC polling, no webhooks), worker authentication (magic
+detection (CDC polling, no webhooks), mechanic authentication (magic
 links), idempotency/retry strategy (Rule 5 mechanism), and
 search/indexing (client-side). Hosting and backup are now decided —
 AWS, see Section 31 (added 08/08/2026). Still open: database schema
@@ -1382,33 +1391,33 @@ No UI. Burns down every external unknown before building on top:
 -   Create one test draft Invoice via the API using the Rule 5
     idempotency mechanism (deterministic DocNumber, query-before-create).
 
-### M1 — Worker entry prototype
+### M1 — Mechanic entry prototype
 
-Single hardcoded event; workers/assignments seeded by admin script.
+Single hardcoded event; mechanics/assignments seeded by admin script.
 
--   Magic-link worker login.
+-   Magic-link mechanic login.
 -   Mobile web UI: assigned customer(s) → client-side bilingual search +
     popular parts (hardcoded initially) → cart → submit.
 -   English/Spanish UI strings from day one.
 -   Usage stored in the app DB; admin CSV export as the posting escape
     hatch (M1 alone is usable at a real weekend with manual bookkeeping).
 
-**Demo: a worker records parts in under 10 seconds on a phone.**
+**Demo: a mechanic records parts in under 10 seconds on a phone.**
 
 ### M2 — Admin review + posting (minimum V1)
 
--   Admin screens: event setup, customer participation, worker
+-   Admin screens: event setup, customer participation, mechanic
     assignments, manual sync.
 -   Per-customer usage review with edit/add/remove (logged).
 -   Approve & Post → idempotent draft Invoice; POST_FAILED surfaced with
     retry.
 
-**Demo: full loop from worker tap to draft invoice in QuickBooks.**
+**Demo: full loop from mechanic tap to draft invoice in QuickBooks.**
 
 ### M3 — Hardening and polish
 
 Popularity computed from usage history, category browsing,
-inactive/missing-item flagging (Rule 3), full audit view, worker
+inactive/missing-item flagging (Rule 3), full audit view, mechanic
 language persistence, accent-tolerance tuning with the real catalog.
 (Periodic CDC sync removed 08/09/2026 — sync is manual-only, §19.)
 
@@ -1443,7 +1452,7 @@ Requirements driving this section:
 ### Architecture
 
 ``` text
-Worker/Admin phones & laptops
+Mechanic/Admin phones & laptops
         │  HTTPS
         ▼
 AWS App Runner (or a single small ECS/Lightsail container)
@@ -1467,7 +1476,7 @@ responsibility.
 
 ### Durability rules (application level)
 
--   A submission is acknowledged to the worker **only after the
+-   A submission is acknowledged to the mechanic **only after the
     database transaction commits.** No fire-and-forget.
 -   **Client-side outbox:** flaky track Wi-Fi is the most likely loss
     vector, not the database. The phone queues submissions locally

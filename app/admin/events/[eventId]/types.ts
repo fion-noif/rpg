@@ -10,7 +10,7 @@
 export interface LinkState {
   link?: string;
   /**
-   * The same token as `link`, rendered as an inline SVG QR code, so the worker can scan it
+   * The same token as `link`, rendered as an inline SVG QR code, so the mechanic can scan it
    * off the manager's screen instead of typing a 100-character URL. Present exactly when
    * `link` is, and for the same one render — see src/qr.ts for why it is inlined rather
    * than fetched from an endpoint.
@@ -30,7 +30,7 @@ export const emptyLinkState: LinkState = {};
  *
  * Extends `LinkState` rather than reusing it wholesale because `existing` is not the right
  * word here — its copy tells the manager to use "Rotate link", which is advice about adding
- * a worker, not about assigning one. The panel says "already recording for this customer"
+ * a mechanic, not about assigning one. The panel says "already recording for this customer"
  * instead.
  */
 export interface AssignState extends LinkState {
@@ -42,10 +42,10 @@ export const emptyAssignState: AssignState = {};
 
 /** Which panel of the event page is showing. `customers` is the default and is never
  *  written into the URL, so a clean `/admin/events/3` stays clean. */
-export type Tab = 'customers' | 'workers';
+export type Tab = 'customers' | 'mechanics';
 
 /**
- * One person in the "worked before" picker. Lives here rather than in AddWorkerForm now
+ * One person in the "worked before" picker. Lives here rather than in AddMechanicForm now
  * that both that form and the customers-tab assign panel need it.
  */
 export interface StaffOption {

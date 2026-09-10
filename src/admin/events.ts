@@ -11,7 +11,7 @@
 //     (§17 "edits logged" / §23 Rule 4).
 import type pg from 'pg';
 import { pool } from '../db';
-import { hashToken, newToken, issueToken, revokeEventTokens, type Queryable } from '../workers';
+import { hashToken, newToken, issueToken, revokeEventTokens, type Queryable } from '../mechanics';
 import { config } from '../config';
 import { normalizeLanguage, normalizeName } from './staff';
 import type { AdminActor } from './admins';
@@ -165,8 +165,8 @@ export type UpdateEventDatesResult =
 /**
  * Moves a weekend's dates — the recovery path for a weekend that ran long.
  *
- * This exists because worker link expiry is derived from `end_date` (src/workers.ts): with no
- * way to edit the date, a Sunday that turned into a Monday would lock every worker out with
+ * This exists because mechanic link expiry is derived from `end_date` (src/mechanics.ts): with no
+ * way to edit the date, a Sunday that turned into a Monday would lock every mechanic out with
  * *no* remedy, since rotating a link re-derives the same dead expiry. Editing the end date is
  * the only lever that actually revives access, which is what makes this a peer of the expiry
  * check rather than a nice-to-have.
@@ -203,7 +203,7 @@ export async function updateEventDates(
       action: 'edit-event-dates',
       admin,
       eventId,
-      // Both sides recorded: this action silently changes when every worker's link dies, so
+      // Both sides recorded: this action silently changes when every mechanic's link dies, so
       // "who extended the weekend, and from what" has to be answerable later (§23 Rule 4).
       detail: {
         from: { startDate: event.start_date, endDate: event.end_date },
@@ -229,7 +229,7 @@ export interface EventSummary {
   closed_at: string | null;
   created_at: string;
   customerCount: number;
-  workerCount: number;
+  mechanicCount: number;
   /** Participating customers with no charge batch yet — still open for entry/review. */
   openCount: number;
   approvedCount: number;
@@ -246,8 +246,8 @@ export async function listEvents(): Promise<EventSummary[]> {
               to_char(e.end_date, 'YYYY-MM-DD') AS end_date,
               (SELECT count(*)::int FROM event_customers ec WHERE ec.event_id = e.id)
                 AS "customerCount",
-              (SELECT count(*)::int FROM workers w WHERE w.event_id = e.id AND NOT w.is_admin)
-                AS "workerCount",
+              (SELECT count(*)::int FROM mechanics w WHERE w.event_id = e.id AND NOT w.is_admin)
+                AS "mechanicCount",
               (SELECT count(*)::int FROM event_customers ec
                 WHERE ec.event_id = e.id AND NOT EXISTS (
                   SELECT 1 FROM charge_batches b
@@ -297,8 +297,8 @@ export interface EventCustomer {
   displayName: string;
   active: boolean;
   addedAt: string;
-  /** Names of the workers assigned to this customer at this event, alphabetical. */
-  workers: string[];
+  /** Names of the mechanics assigned to this customer at this event, alphabetical. */
+  mechanics: string[];
   /** null when nothing has been approved yet. */
   batchStatus: 'APPROVED' | 'POSTED' | 'POST_FAILED' | null;
 }
@@ -308,7 +308,7 @@ export async function listCustomers(eventId: number): Promise<EventCustomer[]> {
     await pool.query<EventCustomer>(
       `SELECT ec.customer_qbo_id AS "qboId", c.display_name AS "displayName", c.active,
               ec.added_at AS "addedAt",
-              COALESCE(asg.names, ARRAY[]::text[]) AS workers,
+              COALESCE(asg.names, ARRAY[]::text[]) AS mechanics,
               b.status AS "batchStatus"
        FROM event_customers ec
        JOIN customers c ON c.qbo_id = ec.customer_qbo_id
@@ -316,7 +316,7 @@ export async function listCustomers(eventId: number): Promise<EventCustomer[]> {
               ON b.event_id = ec.event_id AND b.customer_qbo_id = ec.customer_qbo_id
        LEFT JOIN LATERAL (
          SELECT array_agg(w.name ORDER BY w.name) AS names
-         FROM assignments a JOIN workers w ON w.id = a.worker_id
+         FROM assignments a JOIN mechanics w ON w.id = a.mechanic_id
          WHERE a.customer_qbo_id = ec.customer_qbo_id AND w.event_id = ec.event_id
        ) asg ON TRUE
        WHERE ec.event_id = $1
@@ -386,7 +386,7 @@ export type RemoveCustomerResult =
     };
 
 /**
- * Removal is only for correcting a mis-add. Once a worker has opened a tab or the customer
+ * Removal is only for correcting a mis-add. Once a mechanic has opened a tab or the customer
  * has been approved there is billing history hanging off the participation row, and dropping
  * it would orphan that history — refused rather than cascaded (§31 append-only).
  */
@@ -418,12 +418,12 @@ export async function removeCustomer(
     );
     if (batch.rowCount) return { ok: false as const, reason: 'has-batch' as const };
 
-    // Assignments are scoped to a worker, not to participation, so they have to go too —
-    // otherwise a worker keeps seeing a customer the event no longer includes.
+    // Assignments are scoped to a mechanic, not to participation, so they have to go too —
+    // otherwise a mechanic keeps seeing a customer the event no longer includes.
     await client.query(
       `DELETE FROM assignments a
-       USING workers w
-       WHERE a.worker_id = w.id AND w.event_id = $1 AND a.customer_qbo_id = $2`,
+       USING mechanics w
+       WHERE a.mechanic_id = w.id AND w.event_id = $1 AND a.customer_qbo_id = $2`,
       [eventId, customerQboId]
     );
     await client.query('DELETE FROM event_customers WHERE event_id = $1 AND customer_qbo_id = $2', [
@@ -436,10 +436,10 @@ export async function removeCustomer(
 }
 
 // ---------------------------------------------------------------------------
-// Workers (per-event participation + credential)
+// Mechanics (per-event participation + credential)
 // ---------------------------------------------------------------------------
 
-export interface EventWorker {
+export interface EventMechanic {
   id: number;
   staffId: number;
   name: string;
@@ -451,18 +451,18 @@ export interface EventWorker {
   submissionCount: number;
 }
 
-export async function listWorkers(eventId: number): Promise<EventWorker[]> {
+export async function listMechanics(eventId: number): Promise<EventMechanic[]> {
   return (
-    await pool.query<EventWorker>(
+    await pool.query<EventMechanic>(
       `SELECT w.id, w.staff_id AS "staffId", w.name, w.language,
               (w.token_hash IS NOT NULL) AS "hasToken",
               w.token_revoked_at AS "tokenRevokedAt",
               COALESCE(asg.ids, ARRAY[]::text[]) AS customers,
-              (SELECT count(*)::int FROM submissions s WHERE s.worker_id = w.id) AS "submissionCount"
-       FROM workers w
+              (SELECT count(*)::int FROM submissions s WHERE s.mechanic_id = w.id) AS "submissionCount"
+       FROM mechanics w
        LEFT JOIN LATERAL (
          SELECT array_agg(a.customer_qbo_id ORDER BY a.customer_qbo_id) AS ids
-         FROM assignments a WHERE a.worker_id = w.id
+         FROM assignments a WHERE a.mechanic_id = w.id
        ) asg ON TRUE
        WHERE w.event_id = $1 AND NOT w.is_admin
        ORDER BY w.name, w.id`,
@@ -471,14 +471,14 @@ export async function listWorkers(eventId: number): Promise<EventWorker[]> {
   ).rows;
 }
 
-export type AddWorkerInput =
+export type AddMechanicInput =
   | { eventId: number; staffId: number }
   | { eventId: number; newStaff: { name: string; language?: 'en' | 'es' } };
 
-export type AddWorkerResult =
+export type AddMechanicResult =
   | {
       ok: true;
-      workerId: number;
+      mechanicId: number;
       staffId: number;
       name: string;
       /**
@@ -493,28 +493,28 @@ export type AddWorkerResult =
 /**
  * Adds a person to an event, creating their staff identity first if this is a brand-new
  * person. The magic-link token is minted inside the same transaction as the participation
- * row so a crash can never leave a worker with no credential.
+ * row so a crash can never leave a mechanic with no credential.
  *
- * Idempotent on (event_id, staff_id): a duplicate add returns the existing worker with
+ * Idempotent on (event_id, staff_id): a duplicate add returns the existing mechanic with
  * `link: null` rather than silently rotating the link out from under someone mid-weekend.
  */
-export async function addWorkerToEvent(
-  input: AddWorkerInput,
+export async function addMechanicToEvent(
+  input: AddMechanicInput,
   admin: AdminActor
-): Promise<AddWorkerResult> {
-  return withTx((client) => addWorkerTx(client, input, admin));
+): Promise<AddMechanicResult> {
+  return withTx((client) => addMechanicTx(client, input, admin));
 }
 
 /**
- * The body of `addWorkerToEvent`, taking the transaction instead of opening one, so
- * `addWorkerAndAssign` can run it and the assignment as a single unit. Same grain as
+ * The body of `addMechanicToEvent`, taking the transaction instead of opening one, so
+ * `addMechanicAndAssign` can run it and the assignment as a single unit. Same grain as
  * `lockEvent`/`logAction`, which have always taken a client.
  */
-async function addWorkerTx(
+async function addMechanicTx(
   client: pg.PoolClient,
-  input: AddWorkerInput,
+  input: AddMechanicInput,
   admin: AdminActor
-): Promise<AddWorkerResult> {
+): Promise<AddMechanicResult> {
   {
     const event = await lockEvent(client, input.eventId);
     if (!event) return { ok: false as const, reason: 'unknown-event' as const };
@@ -540,7 +540,7 @@ async function addWorkerTx(
     // or switch language for the next event.
     const token = newToken();
     const inserted = await client.query<{ id: number; name: string }>(
-      `INSERT INTO workers (event_id, staff_id, name, language, token_hash)
+      `INSERT INTO mechanics (event_id, staff_id, name, language, token_hash)
        SELECT $1, s.id, s.name, s.language, $3 FROM staff s WHERE s.id = $2
        ON CONFLICT (event_id, staff_id) DO NOTHING
        RETURNING id, name`,
@@ -549,12 +549,12 @@ async function addWorkerTx(
 
     if (inserted.rows.length === 0) {
       const existing = await client.query<{ id: number; name: string }>(
-        'SELECT id, name FROM workers WHERE event_id = $1 AND staff_id = $2',
+        'SELECT id, name FROM mechanics WHERE event_id = $1 AND staff_id = $2',
         [input.eventId, staffId]
       );
       return {
         ok: true as const,
-        workerId: existing.rows[0].id,
+        mechanicId: existing.rows[0].id,
         staffId,
         name: existing.rows[0].name,
         link: null,
@@ -562,14 +562,14 @@ async function addWorkerTx(
     }
 
     await logAction(client, {
-      action: 'add-worker',
+      action: 'add-mechanic',
       admin,
       eventId: input.eventId,
-      detail: { workerId: inserted.rows[0].id, staffId, name: inserted.rows[0].name },
+      detail: { mechanicId: inserted.rows[0].id, staffId, name: inserted.rows[0].name },
     });
     return {
       ok: true as const,
-      workerId: inserted.rows[0].id,
+      mechanicId: inserted.rows[0].id,
       staffId,
       name: inserted.rows[0].name,
       link: loginLink(token),
@@ -583,117 +583,117 @@ export function loginLink(token: string): string {
 
 export type RotateTokenResult =
   | { ok: true; link: string }
-  | { ok: false; reason: 'unknown-worker' | 'event-closed' };
+  | { ok: false; reason: 'unknown-mechanic' | 'event-closed' };
 
 /**
  * Issues a replacement link and kills the old one (the hash is overwritten, so the previous
- * token stops resolving immediately). Used when a worker loses their link or a phone walks.
+ * token stops resolving immediately). Used when a mechanic loses their link or a phone walks.
  */
-export async function rotateWorkerToken(
-  workerId: number,
+export async function rotateMechanicToken(
+  mechanicId: number,
   admin: AdminActor
 ): Promise<RotateTokenResult> {
   return withTx(async (client) => {
     const res = await client.query<{ closed_at: string | null }>(
-      `SELECT e.closed_at FROM workers w JOIN events e ON e.id = w.event_id
+      `SELECT e.closed_at FROM mechanics w JOIN events e ON e.id = w.event_id
        WHERE w.id = $1 AND NOT w.is_admin
        FOR UPDATE OF w`,
-      [workerId]
+      [mechanicId]
     );
-    if (res.rows.length === 0) return { ok: false as const, reason: 'unknown-worker' as const };
+    if (res.rows.length === 0) return { ok: false as const, reason: 'unknown-mechanic' as const };
     if (res.rows[0].closed_at) return { ok: false as const, reason: 'event-closed' as const };
 
-    const token = await issueToken(workerId, client);
-    await logAction(client, { action: 'rotate-token', admin, detail: { workerId } });
+    const token = await issueToken(mechanicId, client);
+    await logAction(client, { action: 'rotate-token', admin, detail: { mechanicId } });
     return { ok: true as const, link: loginLink(token) };
   });
 }
 
-export type RemoveWorkerResult =
+export type RemoveMechanicResult =
   | { ok: true }
-  | { ok: false; reason: 'unknown-worker' | 'event-closed' | 'has-submissions' };
+  | { ok: false; reason: 'unknown-mechanic' | 'event-closed' | 'has-submissions' };
 
 /**
- * Undo for a mis-add. A worker who has recorded anything is kept forever: their submissions
+ * Undo for a mis-add. A mechanic who has recorded anything is kept forever: their submissions
  * reference them and §31 forbids destroying entry history. Rotate or close the event to kill
  * their access instead.
  */
-export async function removeWorkerFromEvent(
-  workerId: number,
+export async function removeMechanicFromEvent(
+  mechanicId: number,
   admin: AdminActor
-): Promise<RemoveWorkerResult> {
+): Promise<RemoveMechanicResult> {
   return withTx(async (client) => {
     const res = await client.query<{ event_id: number; name: string; closed_at: string | null }>(
-      `SELECT w.event_id, w.name, e.closed_at FROM workers w JOIN events e ON e.id = w.event_id
+      `SELECT w.event_id, w.name, e.closed_at FROM mechanics w JOIN events e ON e.id = w.event_id
        WHERE w.id = $1 AND NOT w.is_admin
        FOR UPDATE OF w`,
-      [workerId]
+      [mechanicId]
     );
-    if (res.rows.length === 0) return { ok: false as const, reason: 'unknown-worker' as const };
-    const worker = res.rows[0];
-    if (worker.closed_at) return { ok: false as const, reason: 'event-closed' as const };
+    if (res.rows.length === 0) return { ok: false as const, reason: 'unknown-mechanic' as const };
+    const mechanic = res.rows[0];
+    if (mechanic.closed_at) return { ok: false as const, reason: 'event-closed' as const };
 
-    const subs = await client.query('SELECT 1 FROM submissions WHERE worker_id = $1 LIMIT 1', [workerId]);
+    const subs = await client.query('SELECT 1 FROM submissions WHERE mechanic_id = $1 LIMIT 1', [mechanicId]);
     if (subs.rowCount) return { ok: false as const, reason: 'has-submissions' as const };
 
-    await client.query('DELETE FROM assignments WHERE worker_id = $1', [workerId]);
-    await client.query('DELETE FROM workers WHERE id = $1', [workerId]);
+    await client.query('DELETE FROM assignments WHERE mechanic_id = $1', [mechanicId]);
+    await client.query('DELETE FROM mechanics WHERE id = $1', [mechanicId]);
     await logAction(client, {
-      action: 'remove-worker',
+      action: 'remove-mechanic',
       admin,
-      eventId: worker.event_id,
-      detail: { workerId, name: worker.name },
+      eventId: mechanic.event_id,
+      detail: { mechanicId, name: mechanic.name },
     });
     return { ok: true as const };
   });
 }
 
 // ---------------------------------------------------------------------------
-// Assignments (worker ↔ customer)
+// Assignments (mechanic ↔ customer)
 // ---------------------------------------------------------------------------
 
 export type AssignResult =
   | { ok: true }
-  | { ok: false; reason: 'unknown-worker' | 'event-closed' | 'unknown-customer' };
+  | { ok: false; reason: 'unknown-mechanic' | 'event-closed' | 'unknown-customer' };
 
 /**
- * Assigning implies participation (§21): a worker can only be pointed at a customer the
+ * Assigning implies participation (§21): a mechanic can only be pointed at a customer the
  * event includes, so the participation row is created here in the same transaction rather
  * than making the manager remember the two-step.
  */
 export async function assign(
-  workerId: number,
+  mechanicId: number,
   customerQboId: string,
   admin: AdminActor
 ): Promise<AssignResult> {
-  return withTx((client) => assignTx(client, workerId, customerQboId, admin));
+  return withTx((client) => assignTx(client, mechanicId, customerQboId, admin));
 }
 
 /**
  * The body of `assign`, taking the transaction instead of opening one.
  *
  * NEVER reach for the exported `assign` from inside another `withTx`. That would check out
- * a *second* pool client and block on this `FOR UPDATE OF w` against a `workers` row the
+ * a *second* pool client and block on this `FOR UPDATE OF w` against a `mechanics` row the
  * outer transaction has inserted but not committed — a self-deadlock that pins a connection
  * until the statement timeout, and with a small pool exhausts it. Composing means calling
  * this core with the caller's client, which is the whole reason it exists.
  */
 async function assignTx(
   client: pg.PoolClient,
-  workerId: number,
+  mechanicId: number,
   customerQboId: string,
   admin: AdminActor
 ): Promise<AssignResult> {
-  // Lock order is event-then-worker across this module (`lockEvent` first in every
-  // event-scoped mutation, worker-only here). A function that took them the other way
+  // Lock order is event-then-mechanic across this module (`lockEvent` first in every
+  // event-scoped mutation, mechanic-only here). A function that took them the other way
   // round would close a deadlock cycle — don't.
   const res = await client.query<{ event_id: number; closed_at: string | null }>(
-    `SELECT w.event_id, e.closed_at FROM workers w JOIN events e ON e.id = w.event_id
+    `SELECT w.event_id, e.closed_at FROM mechanics w JOIN events e ON e.id = w.event_id
      WHERE w.id = $1 AND NOT w.is_admin
      FOR UPDATE OF w`,
-    [workerId]
+    [mechanicId]
   );
-  if (res.rows.length === 0) return { ok: false as const, reason: 'unknown-worker' as const };
+  if (res.rows.length === 0) return { ok: false as const, reason: 'unknown-mechanic' as const };
   if (res.rows[0].closed_at) return { ok: false as const, reason: 'event-closed' as const };
   const eventId = res.rows[0].event_id;
 
@@ -705,31 +705,31 @@ async function assignTx(
     [eventId, customerQboId]
   );
   const inserted = await client.query(
-    `INSERT INTO assignments (worker_id, customer_qbo_id) VALUES ($1, $2)
+    `INSERT INTO assignments (mechanic_id, customer_qbo_id) VALUES ($1, $2)
      ON CONFLICT DO NOTHING RETURNING id`,
-    [workerId, customerQboId]
+    [mechanicId, customerQboId]
   );
   // Re-assigning an already-assigned customer is a no-op, not an audit-worthy event —
   // same rule `addCustomer` follows for a duplicate add.
   if (inserted.rows.length > 0) {
-    await logAction(client, { action: 'assign-customer', admin, eventId, customerQboId, detail: { workerId } });
+    await logAction(client, { action: 'assign-customer', admin, eventId, customerQboId, detail: { mechanicId } });
   }
   return { ok: true as const };
 }
 
-export type AddWorkerAndAssignResult =
+export type AddMechanicAndAssignResult =
   | {
       ok: true;
-      workerId: number;
+      mechanicId: number;
       staffId: number;
       name: string;
-      /** As `AddWorkerResult.link`: a string only on the call that created the worker. */
+      /** As `AddMechanicResult.link`: a string only on the call that created the mechanic. */
       link: string | null;
     }
   | {
       ok: false;
       /**
-       * The union of both legs. `unknown-worker` should be unreachable — the worker was just
+       * The union of both legs. `unknown-mechanic` should be unreachable — the mechanic was just
        * inserted under the event lock — but it is listed rather than cast away: narrowing it
        * off would encode a claim about lock behaviour that a future edit could quietly break,
        * and every reason here already has copy in the UI's message maps.
@@ -740,66 +740,66 @@ export type AddWorkerAndAssignResult =
         | 'unknown-staff'
         | 'invalid-name'
         | 'unknown-customer'
-        | 'unknown-worker';
+        | 'unknown-mechanic';
     };
 
 /**
  * The customers-tab workflow in one transaction: put a person on the event (creating their
  * staff identity if they are new) *and* point them at this customer.
  *
- * One transaction because two would not be safe. Sequencing `addWorkerToEvent` then `assign`
- * lets the first commit — staff row, worker row, token hash, audit row — and the second
- * fail, leaving a worker holding a live magic link with nothing assigned. The manager sees
- * an error after a credential was really minted, and may already have sent it; the worker
+ * One transaction because two would not be safe. Sequencing `addMechanicToEvent` then `assign`
+ * lets the first commit — staff row, mechanic row, token hash, audit row — and the second
+ * fail, leaving a mechanic holding a live magic link with nothing assigned. The manager sees
+ * an error after a credential was really minted, and may already have sent it; the mechanic
  * logs in to "No customers assigned to you yet". Here a failed assignment rolls the whole
  * thing back, because `withTx` commits only on `ok: true`.
  *
- * Idempotency is inherited from `addWorkerTx`: re-running for someone already on the event
+ * Idempotency is inherited from `addMechanicTx`: re-running for someone already on the event
  * returns `link: null` and still makes the assignment.
  */
-export async function addWorkerAndAssign(
-  input: AddWorkerInput,
+export async function addMechanicAndAssign(
+  input: AddMechanicInput,
   customerQboId: string,
   admin: AdminActor
-): Promise<AddWorkerAndAssignResult> {
+): Promise<AddMechanicAndAssignResult> {
   return withTx(async (client) => {
-    const added = await addWorkerTx(client, input, admin);
+    const added = await addMechanicTx(client, input, admin);
     if (!added.ok) return added;
-    // The event row is already locked by addWorkerTx, so this can only fail on the customer;
+    // The event row is already locked by addMechanicTx, so this can only fail on the customer;
     // the other arms stay in the union rather than being cast away, because narrowing here
     // would be a claim about lock behaviour a future edit could quietly break.
-    const assigned = await assignTx(client, added.workerId, customerQboId, admin);
+    const assigned = await assignTx(client, added.mechanicId, customerQboId, admin);
     if (!assigned.ok) return assigned;
     return added;
   });
 }
 
-export type UnassignResult = { ok: true } | { ok: false; reason: 'unknown-worker' | 'event-closed' };
+export type UnassignResult = { ok: true } | { ok: false; reason: 'unknown-mechanic' | 'event-closed' };
 
 /**
- * Takes a customer off a worker's list. Participation and any tab the worker already opened
+ * Takes a customer off a mechanic's list. Participation and any tab the mechanic already opened
  * are left alone — this only changes what they can still write to (§8 least privilege).
  */
 export async function unassign(
-  workerId: number,
+  mechanicId: number,
   customerQboId: string,
   admin: AdminActor
 ): Promise<UnassignResult> {
   return withTx(async (client) => {
     const res = await client.query<{ event_id: number; closed_at: string | null }>(
-      `SELECT w.event_id, e.closed_at FROM workers w JOIN events e ON e.id = w.event_id
+      `SELECT w.event_id, e.closed_at FROM mechanics w JOIN events e ON e.id = w.event_id
        WHERE w.id = $1 AND NOT w.is_admin
        FOR UPDATE OF w`,
-      [workerId]
+      [mechanicId]
     );
-    if (res.rows.length === 0) return { ok: false as const, reason: 'unknown-worker' as const };
+    if (res.rows.length === 0) return { ok: false as const, reason: 'unknown-mechanic' as const };
     if (res.rows[0].closed_at) return { ok: false as const, reason: 'event-closed' as const };
 
     const deleted = await client.query(
-      'DELETE FROM assignments WHERE worker_id = $1 AND customer_qbo_id = $2 RETURNING id',
-      [workerId, customerQboId]
+      'DELETE FROM assignments WHERE mechanic_id = $1 AND customer_qbo_id = $2 RETURNING id',
+      [mechanicId, customerQboId]
     );
-    // Only a real removal is logged: taking away a customer narrows what a worker can bill
+    // Only a real removal is logged: taking away a customer narrows what a mechanic can bill
     // (§8), so it needs a name against it — but a no-op delete is not a decision.
     if (deleted.rows.length > 0) {
       await logAction(client, {
@@ -807,7 +807,7 @@ export async function unassign(
         admin,
         eventId: res.rows[0].event_id,
         customerQboId,
-        detail: { workerId },
+        detail: { mechanicId },
       });
     }
     return { ok: true as const };
@@ -832,7 +832,7 @@ export type CloseEventResult =
 
 /**
  * Ends the weekend, in one transaction: stamps `closed_at`, clears `active` (so the
- * read-only usage view and `workerByToken` stop matching it), and destroys every worker
+ * read-only usage view and `mechanicByToken` stop matching it), and destroys every mechanic
  * credential (§8 — links must be *gone*, not merely ignored).
  *
  * Guarded on every participating customer having a POSTED batch, because closing is what
@@ -905,7 +905,7 @@ export async function listUnposted(eventId: number): Promise<UnpostedCustomer[]>
 
 /**
  * Row lock on the event, so a concurrent close can't slip between a mutation's guard and
- * its write (add-worker racing close would otherwise mint a link the close never revokes).
+ * its write (add-mechanic racing close would otherwise mint a link the close never revokes).
  */
 interface LockedEvent {
   id: number;

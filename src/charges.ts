@@ -1,4 +1,4 @@
-// Approve & Post: the two-phase state machine that turns a weekend's worker entries into one
+// Approve & Post: the two-phase state machine that turns a weekend's mechanic entries into one
 // draft QuickBooks invoice per customer per event (design doc §18.2, §23 Rules 3/4/5; plan §4).
 //
 // Two phases because a database transaction cannot be held across an HTTP call:
@@ -175,8 +175,8 @@ export type ApproveResult =
  * The statement order inside the transaction is the whole design (plan §3) and is not
  * incidental:
  *
- *  1. `FOR UPDATE` on the participation row. Every worker write takes `FOR SHARE` on the same
- *     row first, so from here on no new line can land — including from a worker who has no tab
+ *  1. `FOR UPDATE` on the participation row. Every mechanic write takes `FOR SHARE` on the same
+ *     row first, so from here on no new line can land — including from a mechanic who has no tab
  *     yet, which is the case a status check on existing tabs would miss entirely.
  *  2. Claim the batch with `ON CONFLICT DO NOTHING`. The unique index on
  *     (event_id, customer_qbo_id) makes the database, not this code, the arbiter of a
@@ -265,7 +265,7 @@ export async function approveBatch(input: {
     );
 
     // One invoice line per (item, price snapshot). Grouping by price as well as item is what
-    // keeps the invoice total equal to the review page's total when two workers recorded the
+    // keeps the invoice total equal to the review page's total when two mechanics recorded the
     // same part at different prices (design doc §16) — collapsing them would require inventing
     // a unit price that matches neither. sku/item_name are per-snapshot too in principle;
     // min() picks one deterministically, and they only ever differ if the catalogue was

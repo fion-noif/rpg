@@ -2,11 +2,19 @@
 //
 // Two audiences read the same `items` mirror and must NOT see the same rows:
 //
-//  - **Workers** record physical parts they fitted to a kart. Nothing else belongs on a
-//    phone in a paddock: a worker cannot know how many days of mechanic time to bill, and
+//  - **Mechanics** record physical parts they fitted to a kart. Nothing else belongs on a
+//    phone in a paddock: a mechanic cannot know how many days of mechanic time to bill, and
 //    an accidental tap on "Team Support" is a $450 line on a customer's invoice.
 //  - **Managers** review a customer before the money moves (§17) and are the only people
 //    who may add a service line.
+//
+// A word of warning on the vocabulary, because this file is where it bites: since the M5
+// rename, "mechanic" names two different things. A *mechanic* is the person holding the
+// phone — `mechanics` in the database. "Mechanic (per day)" (`SVC-MECH-DAY`) is a billable
+// QuickBooks service item, a day of that person's time sold to a customer. They are
+// opposites here: `MECHANIC_VISIBLE_ITEM_SQL` exists precisely to hide the item named
+// Mechanic from the mechanic, because deciding how many mechanic-days to bill is the
+// manager's job and a $350 mistap is not recoverable from a paddock.
 //
 // The discriminator is a **QuickBooks category** (`items.category`, synced from
 // `Item.ParentRef.name`). Mike classifies items in QuickBooks and the app reads the answer,
@@ -15,8 +23,8 @@
 // category is one entry in the list below.
 //
 // The rule lives here, once, as SQL fragments rather than being re-typed at each of the four
-// call sites. Four hand-copied `WHERE` clauses is exactly how the worker read gets fixed and
-// the worker *write* keeps letting a guessed item id through.
+// call sites. Four hand-copied `WHERE` clauses is exactly how the mechanic read gets fixed and
+// the mechanic *write* keeps letting a guessed item id through.
 
 /**
  * QuickBooks categories whose items are manager-only.
@@ -56,22 +64,22 @@ function col(alias: string | undefined, name: string): string {
 }
 
 /**
- * Items a worker may see and record (design doc §8).
+ * Items a mechanic may see and record (design doc §8).
  *
  * The `sku IS NOT NULL` clause is belt-and-braces, and deliberate. Every real racing part
  * carries a SKU — it is the permanent technical identifier (§9/§10) and the demo seeder
  * refuses to create a part without one — so requiring it costs nothing. What it buys is that
  * Intuit's two undeletable stock service items, `Services` (Id 1) and `Hours` (Id 2), stay
- * off workers' phones **even if** the seeder's attempt to re-parent them under
+ * off mechanics' phones **even if** the seeder's attempt to re-parent them under
  * `Race Services` fails: they have no SKU and never will. One unclassified row in
- * QuickBooks then means "hidden from workers", which is the safe default for a screen whose
+ * QuickBooks then means "hidden from mechanics", which is the safe default for a screen whose
  * every tap is a charge.
  *
  * Inlined literals, not bind parameters: the values come from the constant above, never from
  * a request, and a fragment with no placeholders composes into any caller's query without
  * having to renumber their `$n`.
  */
-export function workerVisibleItemSql(alias?: string): string {
+export function mechanicVisibleItemSql(alias?: string): string {
   return `${col(alias, 'active')}
     AND ${col(alias, 'type')} IN (${sqlList(SELLABLE_TYPES)})
     AND ${col(alias, 'sku')} IS NOT NULL
@@ -79,7 +87,7 @@ export function workerVisibleItemSql(alias?: string): string {
          OR ${col(alias, 'category')} NOT IN (${MANAGER_ONLY_CATEGORIES_SQL}))`;
 }
 
-/** Service items only: what a manager may add and a worker may not (design doc §17). */
+/** Service items only: what a manager may add and a mechanic may not (design doc §17). */
 export function managerOnlyItemSql(alias?: string): string {
   return `${col(alias, 'active')}
     AND ${col(alias, 'type')} IN (${sqlList(SELLABLE_TYPES)})
@@ -90,11 +98,11 @@ export function managerOnlyItemSql(alias?: string): string {
  * Everything a manager may put on an invoice: parts **plus** services.
  *
  * Written as the union of the two fragments above rather than as its own predicate, so it is
- * true by construction that the manager sees a superset of the worker's catalogue and that
+ * true by construction that the manager sees a superset of the mechanic's catalogue and that
  * the three rules can never drift apart.
  */
 export function managerSellableItemSql(alias?: string): string {
-  return `((${workerVisibleItemSql(alias)}) OR (${managerOnlyItemSql(alias)}))`;
+  return `((${mechanicVisibleItemSql(alias)}) OR (${managerOnlyItemSql(alias)}))`;
 }
 
 /**
@@ -107,11 +115,11 @@ export function isManagerOnlyCategory(category: string | null | undefined): bool
 }
 
 /**
- * The worker-visibility test for TypeScript. Mirrors `WORKER_VISIBLE_ITEM_SQL` clause for
+ * The mechanic-visibility test for TypeScript. Mirrors `MECHANIC_VISIBLE_ITEM_SQL` clause for
  * clause; kept in step by `src/catalog.test.ts`, which asserts the two agree on the same
  * table of cases.
  */
-export function isWorkerVisibleItem(item: {
+export function isMechanicVisibleItem(item: {
   active: boolean;
   sku: string | null;
   type: string | null;

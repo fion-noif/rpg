@@ -3,15 +3,15 @@
 Mobile-friendly parts-usage entry for race weekends, with QuickBooks Online as
 the master-data source and billing destination. Design: `docs/design.md`.
 
-Status: **M0 (QuickBooks connectivity), M1 (worker entry), M2 (admin review +
-posting), M3 (named admin accounts) done** — the full loop from a worker's tap to
+Status: **M0 (QuickBooks connectivity), M1 (mechanic entry), M2 (admin review +
+posting), M3 (named admin accounts) done** — the full loop from a mechanic's tap to
 a draft invoice in QuickBooks runs in the browser, and every manager action
 carries the name of the manager who took it. Next: the rest of M3 hardening
 (design doc §30).
 
 ## Stack
 
-Next.js (one app: worker UI + API) · PostgreSQL (Docker locally, Aurora Serverless v2 in
+Next.js (one app: mechanic UI + API) · PostgreSQL (Docker locally, Aurora Serverless v2 in
 prod) · direct QuickBooks REST calls. Sync is manual-only (design doc §19).
 
 Production runs on AWS App Runner and is pausable between race weekends — see
@@ -55,12 +55,12 @@ username and password (see *Admin accounts*), then:
    not a label, so it is never typed and never changes once minted.
 3. **Pick the customers being billed** from the synced QuickBooks customers.
    A customer must participate before anyone can record parts against them.
-4. **Add workers** — reuse a person from a past event or type a new name. Each
+4. **Add mechanics** — reuse a person from a past event or type a new name. Each
    gets a fresh magic link, **shown once in the UI** as both a **QR code to scan**
-   and a copyable URL; only its SHA-256 hash is stored. Hand the worker your screen
+   and a copyable URL; only its SHA-256 hash is stored. Hand the mechanic your screen
    and let them scan it — that signs them in on their phone with nothing to type.
    Lost it? *Rotate link* issues a new one, with a new QR, and kills the old.
-   Assign each worker their customer(s).
+   Assign each mechanic their customer(s).
 
    The QR cannot be reprinted later: the plaintext token exists only for that one
    render, so *Rotate link* is the only way to produce another.
@@ -68,23 +68,23 @@ username and password (see *Admin accounts*), then:
    Links stop working at the end of the day after the event's end date. If a
    weekend runs long, push the end date back on the event page — rotating a link
    will not help, because a new token derives the same expiry from the same event.
-5. **Workers record parts** on their phones: assigned customer(s) → search or
+5. **Mechanics record parts** on their phones: assigned customer(s) → search or
    popular parts → quantities. Writes queue in a local outbox and retry until the
    server confirms, so flaky track Wi-Fi doesn't lose entries. UI is
-   English/Spanish (toggle, persisted per worker).
-6. **Review per customer** (event → customer): lines aggregated across workers
+   English/Spanish (toggle, persisted per mechanic).
+6. **Review per customer** (event → customer): lines aggregated across mechanics
    with submitter names, edit/remove a quantity, add a missing part, running
-   total, and an audit trail. Manager edits are append-only — the worker's
+   total, and an audit trail. Manager edits are append-only — the mechanic's
    original line is voided and a new line is recorded under the manager's own
    name, never overwritten.
    - **Add a service** here too — team support, mechanic, engine lease —
      billed in whole **days**, from a control kept separate from the parts
-     picker because the units differ (design doc §9.2). Workers never see
+     picker because the units differ (design doc §9.2). Mechanics never see
      these items; only managers can add them. The running total shows a
      parts/services split, but the number that goes to QuickBooks is the one
      sum over every line.
 7. **Approve & Post** → one idempotent draft Invoice per customer per event.
-   Approving locks the customer: further worker writes are refused (409) and
+   Approving locks the customer: further mechanic writes are refused (409) and
    their app goes read-only with "this customer's parts have been approved".
    - A failed post shows the QuickBooks error verbatim with **Retry**. Retry
      re-queries by DocNumber and adopts an invoice that was in fact created, so
@@ -94,7 +94,7 @@ username and password (see *Admin accounts*), then:
      been attempted you must retry to resolve the unknown state, and once
      `POSTED` the invoice belongs to QuickBooks — no un-approve (§23 Rule 2).
 8. **Close the event** when every participating customer is posted (with an
-   explicit override if not). This destroys every worker link for the event —
+   explicit override if not). This destroys every mechanic link for the event —
    their `/login/<token>` URLs stop working — and deactivates the event.
 
 **CSV escape hatch** (still there, and the fallback if QuickBooks is down):
@@ -104,8 +104,8 @@ username and password (see *Admin accounts*), then:
 must exactly match QuickBooks display names; set `startDate`/`endDate` to the
 weekend you are seeding, or the links it prints may already be expired), then
 `npm run seed -- myevent.json`.
-It prints one magic link per worker. Re-running updates assignments and keeps
-existing links. `npm run rotate` re-issues a single worker's link.
+It prints one magic link per mechanic. Re-running updates assignments and keeps
+existing links. `npm run rotate` re-issues a single mechanic's link.
 
 ## Admin accounts
 
@@ -136,7 +136,7 @@ deactivated, and nobody can deactivate themselves.
 
 **Temp passwords.** Creating a manager or resetting a password generates a
 12-character password shown **once, in the response HTML** — never in a URL,
-same rule as a worker magic link. Lost it? Reset again.
+same rule as a mechanic magic link. Lost it? Reset again.
 
 **Revocation** has two levers, and they are different sizes:
 
@@ -192,7 +192,7 @@ npm run seed-qbo -- --yes
 # 2. Pull it into the app database.
 npm run sync
 
-# 3. A full race weekend: event, 8 workers with magic links, usage,
+# 3. A full race weekend: event, 8 mechanics with magic links, usage,
 #    one customer POSTED and one POST_FAILED. Prints the link table.
 npm run seed-demo
 ```
@@ -233,8 +233,8 @@ charge it will not let go of. The script reports each one and why.
 
 For the two items that is now harmless: the seeder **re-parents** them under
 `Race Services` with a sparse update, which reclassifies them as manager-only
-instead of leaving them as two unpriced taps in a worker's parts list. And even
-if QuickBooks ever refuses *that*, neither has a SKU, and the worker-visibility
+instead of leaving them as two unpriced taps in a mechanic's parts list. And even
+if QuickBooks ever refuses *that*, neither has a SKU, and the mechanic-visibility
 rule requires one — see below.
 
 ### Manager-only service items
@@ -255,15 +255,15 @@ and a future `Labor` category is one line in `MANAGER_ONLY_CATEGORIES`
 names across every type and the stock demo already holds that name.
 
 That one rule lives in `src/catalog.ts` and is reused at every item call site —
-the worker catalog, the popular strip, the worker *write* path, and the manager's
+the mechanic catalog, the popular strip, the mechanic *write* path, and the manager's
 picker. Two properties worth knowing:
 
 - **`sku IS NOT NULL` is deliberate belt-and-braces.** Every real part has a SKU,
   so requiring one costs nothing; what it buys is that an unclassified item
-  defaults to *hidden from workers*, which is the safe default on a screen where
+  defaults to *hidden from mechanics*, which is the safe default on a screen where
   every tap is a charge.
 - **It is enforced on writes, not just in the picker.** Hiding a row from a
-  dropdown is presentation, not authorisation. A worker who guesses a service
+  dropdown is presentation, not authorisation. A mechanic who guesses a service
   item's QuickBooks id is refused in the transaction, as `unknown-item` — the same
   answer an unknown id gets, because confirming the id was real tells a prober
   something.
@@ -284,7 +284,7 @@ design doc at all.** Until it is, parts stay non-taxable so the two figures
 reconcile exactly.
 
 > **`APP_BASE_URL` must be reachable from a phone before real user testing.**
-> Worker magic links are minted from `config.appBaseUrl` and baked into the link
+> Mechanic magic links are minted from `config.appBaseUrl` and baked into the link
 > text. At the default `http://localhost:3000` every link resolves to the
 > tester's *own* device and will not work from a phone in a paddock. Set it to
 > the LAN IP or the deployed host **before** minting links to hand out — links
@@ -292,7 +292,7 @@ reconcile exactly.
 
 ## Notes
 
-- Worker auth: admin-generated magic links (`/login/<token>`), handed over as a
+- Mechanic auth: admin-generated magic links (`/login/<token>`), handed over as a
   QR code or a copied URL; only a SHA-256 hash of the token is stored. Session
   cookie lasts 7 days. The QR is rendered server-side and inlined into the admin
   HTML (`src/qr.ts`) — deliberately not served from an endpoint, because a token
@@ -305,14 +305,14 @@ reconcile exactly.
   if any file forgets its guard — or if a mutating route accepts `?secret=`.
 - Admin adjustments are attributed by *data*, not by a new column: each admin
   owns one `staff` row (`staff.admin_id`) named after their account, and the
-  per-event synthetic `workers.is_admin` row hangs off it. So the worker screens,
-  the review page and the CSV export all read `workers.name` and get a real name
+  per-event synthetic `mechanics.is_admin` row hangs off it. So the mechanic screens,
+  the review page and the CSV export all read `mechanics.name` and get a real name
   with no query changes. Pre-M3 rows still read `Manager`, which is the honest
   answer for a line the shared password recorded — history is not rewritten.
 - Usage is append-only (design doc §31): a write carries an *absolute* qty keyed
   on (customer, item), so replaying it from the outbox is idempotent with no
   per-operation id. Removing a part voids the line rather than deleting it.
-- Approving a customer and posting their invoice serialise against worker writes
+- Approving a customer and posting their invoice serialise against mechanic writes
   through the `event_customers` row (`FOR SHARE` / `FOR UPDATE`), so a write can't
   slip in after the aggregate is snapshotted. The posted aggregate is stored in
   `charge_batch_lines` — QuickBooks invoices are bookkeeper-mutable, so amounts
@@ -320,6 +320,6 @@ reconcile exactly.
 - The database currently contains smoke-test data (a Round 7 event, customers
   `101–104`, items `201–204`). To wipe operational data before real use:
   `docker exec -i rpg-db-1 psql -U racing racing -c
-  "TRUNCATE submissions, assignments, workers, staff, events, event_customers, charge_batch_lines, admin_actions, items, customers CASCADE;"`
+  "TRUNCATE submissions, assignments, mechanics, staff, events, event_customers, charge_batch_lines, admin_actions, items, customers CASCADE;"`
   (leave `admins` alone unless you also want to re-bootstrap an owner)
   then re-run `npm run sync`.

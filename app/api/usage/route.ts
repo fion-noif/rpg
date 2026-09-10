@@ -3,27 +3,27 @@
 // doc §31). The route is thin auth + parsing; the transaction and rules live in src/usage.ts
 // so they're testable without an HTTP server (see src/usage.db.test.ts).
 import { NextRequest, NextResponse } from 'next/server';
-import { workerByToken, assignmentsFor, SESSION_COOKIE } from '@/src/workers';
+import { mechanicByToken, assignmentsFor, SESSION_COOKIE } from '@/src/mechanics';
 import { usageForCustomer, setUsageQty, validateQty } from '@/src/usage';
 
 async function authorize(req: NextRequest, customerId: string) {
-  const worker = await workerByToken(req.cookies.get(SESSION_COOKIE)?.value);
-  if (!worker) return { error: NextResponse.json({ error: 'not authenticated' }, { status: 401 }) };
+  const mechanic = await mechanicByToken(req.cookies.get(SESSION_COOKIE)?.value);
+  if (!mechanic) return { error: NextResponse.json({ error: 'not authenticated' }, { status: 401 }) };
 
-  // Least privilege (design doc §8): the customer must be assigned to this worker.
-  const assigned = await assignmentsFor(worker.id);
+  // Least privilege (design doc §8): the customer must be assigned to this mechanic.
+  const assigned = await assignmentsFor(mechanic.id);
   if (!customerId || !assigned.some((c) => c.qbo_id === customerId)) {
     return { error: NextResponse.json({ error: 'customer not assigned' }, { status: 403 }) };
   }
-  return { worker };
+  return { mechanic };
 }
 
 export async function GET(req: NextRequest) {
   const customerId = req.nextUrl.searchParams.get('customerId') ?? '';
-  const { worker, error } = await authorize(req, customerId);
+  const { mechanic, error } = await authorize(req, customerId);
   if (error) return error;
 
-  const lines = await usageForCustomer(worker.event_id, customerId);
+  const lines = await usageForCustomer(mechanic.event_id, customerId);
   return NextResponse.json({ lines });
 }
 
@@ -35,7 +35,7 @@ interface PutBody {
 
 export async function PUT(req: NextRequest) {
   const body = (await req.json()) as PutBody;
-  const { worker, error } = await authorize(req, body.customerId);
+  const { mechanic, error } = await authorize(req, body.customerId);
   if (error) return error;
 
   if (!body.itemId || !validateQty(body.qty)) {
@@ -43,8 +43,8 @@ export async function PUT(req: NextRequest) {
   }
 
   const result = await setUsageQty({
-    workerId: worker.id,
-    eventId: worker.event_id,
+    mechanicId: mechanic.id,
+    eventId: mechanic.event_id,
     customerId: body.customerId,
     itemId: body.itemId,
     qty: body.qty,

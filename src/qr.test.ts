@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import QRCode from 'qrcode';
 import { qrSvg } from './qr';
 
-/** A realistic worker link: App Runner's long generated domain plus a 48-hex token. */
+/** A realistic mechanic link: App Runner's long generated domain plus a 48-hex token. */
 const REAL_LINK =
   'https://abcd1234ef.us-west-2.awsapprunner.com/login/' + 'a3f9c2'.repeat(8);
 
@@ -31,7 +31,7 @@ test('is deterministic for one input and distinct across tokens', async () => {
   const [a, b] = await Promise.all([qrSvg(REAL_LINK), qrSvg(REAL_LINK)]);
   assert.equal(a, b);
   const other = await qrSvg(REAL_LINK.replace('a3f9c2a3f9c2', 'b4e8d1b4e8d1'));
-  assert.notEqual(a, other, 'two workers must not get the same code');
+  assert.notEqual(a, other, 'two mechanics must not get the same code');
 });
 
 test('stays coarse enough to scan off a screen at realistic link length', async () => {

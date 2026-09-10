@@ -20,8 +20,8 @@ export const config = {
   tokenUrl: 'https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer',
   databaseUrl: process.env.DATABASE_URL ?? 'postgres://racing:racing@localhost:5433/racing',
   appBaseUrl: process.env.APP_BASE_URL ?? 'http://localhost:3000',
-  // The zone an event's start/end *dates* are meant in, and therefore the zone a worker
-  // link's expiry is computed in (src/workers.ts). Dates are calendar days, not instants:
+  // The zone an event's start/end *dates* are meant in, and therefore the zone a mechanic
+  // link's expiry is computed in (src/mechanics.ts). Dates are calendar days, not instants:
   // without a zone, "expires after the day the event ends" would be resolved against
   // whatever the database session's TimeZone happens to be — in UTC that cuts a US paddock
   // off mid-afternoon. Set EVENT_TIME_ZONE to the track's zone to make the cutoff exact.

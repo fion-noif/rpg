@@ -154,7 +154,7 @@ export type CreateAdminResult =
 
 /**
  * Creates an account with a generated one-time password, returned exactly once — same
- * discipline as a worker magic link (src/admin/events.ts loginLink): shown in the response
+ * discipline as a mechanic magic link (src/admin/events.ts loginLink): shown in the response
  * body, never put in a URL, never stored in plaintext. Losing it means a reset, not a lookup.
  *
  * `by` is null only for the bootstrap CLI, which runs before any admin exists.

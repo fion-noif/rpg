@@ -4,7 +4,7 @@
     "startDate": "2026-09-04",
     "endDate": "2026-09-06"
   },
-  "workers": [
+  "mechanics": [
     { "name": "Mike", "language": "en", "customers": ["Smith Racing"] },
     { "name": "Carlos", "language": "es", "customers": ["Garcia Racing"] },
     { "name": "Alex", "language": "en", "customers": ["Miller Racing", "Chen Racing"] }

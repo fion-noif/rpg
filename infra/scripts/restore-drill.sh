@@ -49,7 +49,7 @@ echo
 echo "=== The data that cannot be lost — check these against memory ==="
 docker exec "$CONTAINER" psql -U postgres -d racing_drill -c "
   SELECT 'events'            AS what, count(*)::text AS rows FROM events
-  UNION ALL SELECT 'workers',          count(*)::text FROM workers
+  UNION ALL SELECT 'mechanics',          count(*)::text FROM mechanics
   UNION ALL SELECT 'submissions',      count(*)::text FROM submissions
   UNION ALL SELECT 'submission_lines', count(*)::text FROM submission_lines
   UNION ALL SELECT 'charge_batches',   count(*)::text FROM charge_batches

@@ -10,7 +10,7 @@
 // this asks once, with the blockers already on screen.
 import { notFound } from 'next/navigation';
 import { requireAdminPage } from '@/src/admin-page-auth';
-import { getEvent, listUnposted, listWorkers } from '@/src/admin/events';
+import { getEvent, listUnposted, listMechanics } from '@/src/admin/events';
 import { closeEventAction } from '../actions';
 import { BATCH_LABEL } from '../types';
 
@@ -41,9 +41,9 @@ export default async function CloseEventPage({
   const { error } = await searchParams;
   // The same query `closeEvent`'s guard runs (src/admin/events.ts `unpostedRows`), not a
   // re-derivation of it: the explanation and the rule must not be able to disagree.
-  const [unposted, workers] = await Promise.all([listUnposted(eventId), listWorkers(eventId)]);
+  const [unposted, mechanics] = await Promise.all([listUnposted(eventId), listMechanics(eventId)]);
   const closed = event.closed_at !== null;
-  const liveLinks = workers.filter((w) => w.hasToken).length;
+  const liveLinks = mechanics.filter((w) => w.hasToken).length;
 
   return (
     <div className="admin-wrap narrow">
@@ -54,7 +54,7 @@ export default async function CloseEventPage({
       {closed ? (
         <>
           <p className="admin-note">
-            Already closed. It ran {event.start_date} → {event.end_date}, and every worker link
+            Already closed. It ran {event.start_date} → {event.end_date}, and every mechanic link
             was destroyed. Reopening is not supported — create a new event.
           </p>
           <a className="admin-btn secondary" href={`/admin/events/${eventId}`}>
@@ -64,7 +64,7 @@ export default async function CloseEventPage({
       ) : (
         <>
           <p className="admin-note">
-            Closing ends the weekend. It destroys every worker link — they are deleted, not
+            Closing ends the weekend. It destroys every mechanic link — they are deleted, not
             just ignored — and makes the event unbillable from this app. It cannot be undone.
           </p>
 
@@ -107,14 +107,14 @@ export default async function CloseEventPage({
               <input type="checkbox" required />{' '}
               {unposted.length > 0
                 ? `I understand these ${unposted.length} customer(s) will never be invoiced from this app, and that this override is recorded in the audit log.`
-                : 'I understand every worker link is destroyed and cannot be restored.'}
+                : 'I understand every mechanic link is destroyed and cannot be restored.'}
             </label>
 
             <div className="admin-inline">
               <button className="admin-btn danger" type="submit">
                 {unposted.length > 0
                   ? 'Close anyway'
-                  : `Close event & destroy ${liveLinks} worker link${liveLinks === 1 ? '' : 's'}`}
+                  : `Close event & destroy ${liveLinks} mechanic link${liveLinks === 1 ? '' : 's'}`}
               </button>
               <a className="admin-btn secondary" href={`/admin/events/${eventId}`}>
                 Cancel

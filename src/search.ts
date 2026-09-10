@@ -1,4 +1,4 @@
-// Structural subset of app/WorkerApp.tsx's CatalogItem — kept independent so src/ doesn't
+// Structural subset of app/MechanicApp.tsx's CatalogItem — kept independent so src/ doesn't
 // depend on app/ (the app imports from src, not the reverse).
 export interface SearchableItem {
   id: string;

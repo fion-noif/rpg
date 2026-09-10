@@ -3,7 +3,7 @@
 // Why this isn't just `req.nextUrl.origin`: `next dev` (without -H) resolves `req.url`
 // against localhost no matter what Host the client sent, so a redirect built from the
 // origin sends a phone on the LAN to `http://localhost` — a dead end on that device.
-// The worker magic-link route worked around this inline; the admin routes did not, which
+// The mechanic magic-link route worked around this inline; the admin routes did not, which
 // is why signing in from a phone bounced to localhost.
 
 /**

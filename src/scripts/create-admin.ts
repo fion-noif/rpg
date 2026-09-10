@@ -6,7 +6,7 @@
 //   npm run create-admin -- jsmith "Jane Smith"
 //
 // No auth check, matching every other script in this directory (npm run rotate hands out a
-// live worker credential on the same terms): running this requires a shell on the box and the
+// live mechanic credential on the same terms): running this requires a shell on the box and the
 // DATABASE_URL, which is the authorisation. It is also the only way to create a *second
 // owner* — an owner can deactivate other owners, so that is deliberately not a UI button.
 import { pool } from '../db';

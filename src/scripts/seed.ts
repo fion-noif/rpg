@@ -1,17 +1,17 @@
-// M1: seed an event, its workers, and worker→customer assignments from a JSON file,
-// then print each worker's magic login link.
+// M1: seed an event, its mechanics, and mechanic→customer assignments from a JSON file,
+// then print each mechanic's magic login link.
 //
 // Usage: npm run seed -- seed.json     (see seed.example.json)
 // Customers are matched by exact display name against the synced customers table,
-// so run `npm run sync` first. Re-running updates assignments; existing workers keep their links.
+// so run `npm run sync` first. Re-running updates assignments; existing mechanics keep their links.
 import { readFileSync } from 'node:fs';
 import { q, pool } from '../db';
 import { createEvent } from '../admin/events';
 import { config } from '../config';
-import { hashToken, newToken } from '../workers';
+import { hashToken, newToken } from '../mechanics';
 
 /**
- * Resolves the stable staff identity for a seeded worker.
+ * Resolves the stable staff identity for a seeded mechanic.
  *
  * NOTE (design doc §23 Rule 1): matching by name is documented legacy behaviour of this
  * script and of nothing else. A seed file has no ids to offer, so re-seeding necessarily
@@ -32,7 +32,7 @@ async function staffFor(name: string, language: 'en' | 'es'): Promise<number> {
 
 interface SeedFile {
   event: { name: string; startDate: string; endDate: string };
-  workers: { name: string; language?: 'en' | 'es'; customers: string[] }[];
+  mechanics: { name: string; language?: 'en' | 'es'; customers: string[] }[];
 }
 
 const path = process.argv[2];
@@ -63,7 +63,7 @@ if (existingEvent[0]) {
   // posted QuickBooks invoice, and re-deriving it would orphan that invoice (§23 Rule 5).
   //
   // The dates go straight to Postgres unvalidated. A malformed one is a typo in a file the
-  // operator is editing by hand, and the DATE cast rejects it loudly before any worker row is
+  // operator is editing by hand, and the DATE cast rejects it loudly before any mechanic row is
   // touched — cheaper than duplicating `normalizeDate`, which is private to the admin module.
   await q('UPDATE events SET start_date = $1, end_date = $2, active = TRUE WHERE id = $3', [
     seed.event.startDate,
@@ -81,48 +81,48 @@ if (existingEvent[0]) {
 }
 
 const links: string[] = [];
-for (const w of seed.workers) {
+for (const w of seed.mechanics) {
   const language = w.language ?? 'en';
   const staffId = await staffFor(w.name, language);
 
-  // One worker row per (event, name); keep the existing token if re-seeding.
+  // One mechanic row per (event, name); keep the existing token if re-seeding.
   const existing = await q<{ id: number }>(
-    'SELECT id FROM workers WHERE event_id = $1 AND name = $2',
+    'SELECT id FROM mechanics WHERE event_id = $1 AND name = $2',
     [eventId, w.name]
   );
-  let workerId: number;
+  let mechanicId: number;
   let link: string;
   if (existing[0]) {
-    workerId = existing[0].id;
-    await q('UPDATE workers SET language = $1, staff_id = $2 WHERE id = $3', [language, staffId, workerId]);
+    mechanicId = existing[0].id;
+    await q('UPDATE mechanics SET language = $1, staff_id = $2 WHERE id = $3', [language, staffId, mechanicId]);
     link = '(existing link unchanged)';
   } else {
     const token = newToken();
     const [row] = await q<{ id: number }>(
-      'INSERT INTO workers (event_id, staff_id, name, language, token_hash) VALUES ($1, $2, $3, $4, $5) RETURNING id',
+      'INSERT INTO mechanics (event_id, staff_id, name, language, token_hash) VALUES ($1, $2, $3, $4, $5) RETURNING id',
       [eventId, staffId, w.name, language, hashToken(token)]
     );
-    workerId = row.id;
+    mechanicId = row.id;
     link = `${config.appBaseUrl}/login/${token}`;
   }
 
-  await q('DELETE FROM assignments WHERE worker_id = $1', [workerId]);
+  await q('DELETE FROM assignments WHERE mechanic_id = $1', [mechanicId]);
   for (const customerName of w.customers) {
     const [customer] = await q<{ qbo_id: string }>(
       'SELECT qbo_id FROM customers WHERE display_name = $1 AND active',
       [customerName]
     );
     if (!customer) {
-      console.error(`Customer "${customerName}" (worker ${w.name}) not found in synced customers — run \`npm run sync\` or fix the name.`);
+      console.error(`Customer "${customerName}" (mechanic ${w.name}) not found in synced customers — run \`npm run sync\` or fix the name.`);
       process.exit(1);
     }
-    // Assigning a worker implies the customer participates in the event (design doc §21).
+    // Assigning a mechanic implies the customer participates in the event (design doc §21).
     await q(
       'INSERT INTO event_customers (event_id, customer_qbo_id) VALUES ($1, $2) ON CONFLICT DO NOTHING',
       [eventId, customer.qbo_id]
     );
-    await q('INSERT INTO assignments (worker_id, customer_qbo_id) VALUES ($1, $2) ON CONFLICT DO NOTHING', [
-      workerId,
+    await q('INSERT INTO assignments (mechanic_id, customer_qbo_id) VALUES ($1, $2) ON CONFLICT DO NOTHING', [
+      mechanicId,
       customer.qbo_id,
     ]);
   }
@@ -133,8 +133,8 @@ for (const w of seed.workers) {
 // operator learns which one their weekend ended up with, and it is what will appear on the
 // QuickBooks invoices.
 console.log(`\nEvent: ${seed.event.name} (${eventCode}) — ${seed.event.startDate} to ${seed.event.endDate}\n`);
-console.log('Worker           Customers                                Login link');
+console.log('Mechanic           Customers                                Login link');
 console.log('-'.repeat(110));
 for (const l of links) console.log(l);
-console.log('\nSend each worker their link (text message / WhatsApp). Links are personal — do not share between workers.');
+console.log('\nSend each mechanic their link (text message / WhatsApp). Links are personal — do not share between mechanics.');
 await pool.end();

@@ -2,8 +2,8 @@
 
 // The Customers tab, and the default view: the weekend read as a list of cars to cover.
 //
-// This is where setup happens now. The old page made you assign from the *worker's* row, so
-// setup read "pick a worker, then remember which customers they cover"; a manager thinks
+// This is where setup happens now. The old page made you assign from the *mechanic's* row, so
+// setup read "pick a mechanic, then remember which customers they cover"; a manager thinks
 // customer-first, so each row carries its own assign panel and the "add this person to the
 // event" step is folded into it.
 //
@@ -12,14 +12,14 @@
 import { useMemo, useState } from 'react';
 import { norm } from '@/src/search';
 import { addCustomerAction, removeCustomerAction } from './actions';
-import { AssignPanel, type AssignableWorker } from './AssignPanel';
+import { AssignPanel, type AssignableMechanic } from './AssignPanel';
 import { BATCH_LABEL, type StaffOption } from './types';
 
 export interface CustomerRow {
   qboId: string;
   displayName: string;
   active: boolean;
-  workers: string[];
+  mechanics: string[];
   batchStatus: 'APPROVED' | 'POSTED' | 'POST_FAILED' | null;
 }
 
@@ -35,14 +35,14 @@ export function CustomersTable({
   closed: boolean;
   customers: CustomerRow[];
   pickable: { qboId: string; displayName: string }[];
-  /** qboId → the event's workers not yet assigned to that customer. Computed server-side by
-   *  worker id, so same-named people stay distinguishable. */
-  assignableByCustomer: Record<string, AssignableWorker[]>;
+  /** qboId → the event's mechanics not yet assigned to that customer. Computed server-side by
+   *  mechanic id, so same-named people stay distinguishable. */
+  assignableByCustomer: Record<string, AssignableMechanic[]>;
   staff: StaffOption[];
 }) {
   const [filter, setFilter] = useState('');
 
-  // Matches the customer name or any of its assigned workers, so "who is Ramírez covering?"
+  // Matches the customer name or any of its assigned mechanics, so "who is Ramírez covering?"
   // is answerable from here. `norm` folds accents (src/search.ts), which matters because
   // these are real names — typing "ramirez" has to find "Ramírez".
   //
@@ -52,7 +52,7 @@ export function CustomersTable({
     const terms = norm(filter).split(/\s+/).filter(Boolean);
     if (terms.length === 0) return customers;
     return customers.filter((c) => {
-      const haystack = norm(`${c.displayName} ${c.workers.join(' ')}`);
+      const haystack = norm(`${c.displayName} ${c.mechanics.join(' ')}`);
       return terms.every((t) => haystack.includes(t));
     });
   }, [customers, filter]);
@@ -65,7 +65,7 @@ export function CustomersTable({
           type="search"
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
-          placeholder="Filter by customer or worker"
+          placeholder="Filter by customer or mechanic"
           aria-label="Filter customers"
         />
         {/* Always shown, not just while filtering: a narrowed table must never be mistaken
@@ -83,11 +83,11 @@ export function CustomersTable({
             <th>Customer</th>
             {/* NOT "Recorded by" — this column comes from `assignments` (who the manager
                 pointed at this customer), not from `submissions` (who has actually recorded
-                a part). Those routinely differ: a worker can be assigned and record nothing
+                a part). Those routinely differ: a mechanic can be assigned and record nothing
                 all weekend, and a manager adjustment during review records against no
-                assigned worker at all. The two headers with the same name elsewhere
+                assigned mechanic at all. The two headers with the same name elsewhere
                 (app/admin/usage, CustomerReview) really are about recorded lines. */}
-            <th>Assigned worker(s)</th>
+            <th>Assigned mechanic(s)</th>
             <th>Invoicing</th>
             <th />
           </tr>
@@ -153,7 +153,7 @@ export function CustomersTable({
 }
 
 /**
- * One customer, one row. The assign control lives inside the "Assigned worker(s)" cell,
+ * One customer, one row. The assign control lives inside the "Assigned mechanic(s)" cell,
  * directly under the names it changes — the affordance belongs in the column it affects,
  * not in a separate strip below where it reads as unrelated furniture.
  *
@@ -171,7 +171,7 @@ function CustomerRowView({
   c: CustomerRow;
   eventId: number;
   closed: boolean;
-  assignable: AssignableWorker[];
+  assignable: AssignableMechanic[];
   staff: StaffOption[];
 }) {
   return (
@@ -183,13 +183,13 @@ function CustomerRowView({
           </a>
           {!c.active && <span className="admin-badge closed">inactive in QBO</span>}
         </td>
-        {/* Several workers on one customer is normal, not an edge case — a busy team splits
+        {/* Several mechanics on one customer is normal, not an edge case — a busy team splits
             a car across a mechanic and a tyre fitter. listCustomers array_aggs them
             alphabetically, so this is a stable list rather than a first-one-wins. */}
         <td>
           <div className="admin-assigned">
-            {c.workers.length ? (
-              c.workers.join(', ')
+            {c.mechanics.length ? (
+              c.mechanics.join(', ')
             ) : (
               <span className="admin-muted">nobody assigned</span>
             )}
@@ -200,7 +200,7 @@ function CustomerRowView({
               <AssignPanel
                 eventId={eventId}
                 customer={{ qboId: c.qboId, displayName: c.displayName }}
-                workers={assignable}
+                mechanics={assignable}
                 staff={staff}
               />
             </details>

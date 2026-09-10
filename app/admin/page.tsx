@@ -67,7 +67,7 @@ export default async function AdminHomePage({
             <th>Dates</th>
             <th>Status</th>
             <th className="num">Customers</th>
-            <th className="num">Workers</th>
+            <th className="num">Mechanics</th>
             <th>Invoicing</th>
           </tr>
         </thead>
@@ -92,7 +92,7 @@ export default async function AdminHomePage({
                 )}
               </td>
               <td className="num">{e.customerCount}</td>
-              <td className="num">{e.workerCount}</td>
+              <td className="num">{e.mechanicCount}</td>
               <td>
                 {e.customerCount === 0 ? (
                   <span className="admin-muted">nothing to bill yet</span>

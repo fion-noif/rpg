@@ -5,25 +5,25 @@
 import { test, before, beforeEach, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { pool } from './db';
-import { workerByToken } from './workers';
+import { mechanicByToken } from './mechanics';
 import { setUsageQty } from './usage';
 import { applySchema, resetSchema, seedAdmin, seedFixtures, type Fixtures } from './test-helpers';
 import type { AdminActor } from './admin/admins';
 import { createStaff, listStaff } from './admin/staff';
 import {
   addCustomer,
-  addWorkerAndAssign,
-  addWorkerToEvent,
+  addMechanicAndAssign,
+  addMechanicToEvent,
   assign,
   closeEvent,
   createEvent,
   listCustomers,
   listEvents,
   listUnposted,
-  listWorkers,
+  listMechanics,
   removeCustomer,
-  removeWorkerFromEvent,
-  rotateWorkerToken,
+  removeMechanicFromEvent,
+  rotateMechanicToken,
   unassign,
   updateEventDates,
 } from './admin/events';
@@ -58,7 +58,7 @@ after(async () => {
   await pool.end();
 });
 
-/** The plaintext token out of a one-time magic link, for exercising workerByToken. */
+/** The plaintext token out of a one-time magic link, for exercising mechanicByToken. */
 function tokenOf(link: string): string {
   const token = link.split('/login/')[1];
   assert.ok(token, `link has no token: ${link}`);
@@ -66,8 +66,8 @@ function tokenOf(link: string): string {
 }
 
 /**
- * A weekend that is running *now*, so the worker links it mints resolve (link expiry is
- * derived from `end_date` — see src/workers.db.test.ts). Tests that care about a specific
+ * A weekend that is running *now*, so the mechanic links it mints resolve (link expiry is
+ * derived from `end_date` — see src/mechanics.db.test.ts). Tests that care about a specific
  * code assert on the value `createEvent` returns rather than predicting it.
  */
 function today(offsetDays = 0): string {
@@ -232,14 +232,14 @@ test('listEvents summarises participation and batch status per event', async (t)
   if (!dbAvailable) return t.skip();
   const eventId = await freshEvent();
   await addCustomer(eventId, fx.customerId, admin);
-  const added = await addWorkerToEvent({ eventId, newStaff: { name: 'Nia' } }, admin);
+  const added = await addMechanicToEvent({ eventId, newStaff: { name: 'Nia' } }, admin);
   assert.equal(added.ok, true);
 
   const events = await listEvents();
   const r8 = events.find((e) => e.id === eventId);
   assert.ok(r8);
   assert.equal(r8.customerCount, 1);
-  assert.equal(r8.workerCount, 1);
+  assert.equal(r8.mechanicCount, 1);
   assert.equal(r8.openCount, 1); // nothing approved yet
   assert.equal(r8.approvedCount, 0);
   assert.equal(r8.postedCount, 0);
@@ -249,7 +249,7 @@ test('listEvents summarises participation and batch status per event', async (t)
 // Customers
 // ---------------------------------------------------------------------------
 
-test('addCustomer is idempotent, listCustomers shows assigned worker names', async (t) => {
+test('addCustomer is idempotent, listCustomers shows assigned mechanic names', async (t) => {
   if (!dbAvailable) return t.skip();
   const eventId = await freshEvent();
 
@@ -264,32 +264,32 @@ test('addCustomer is idempotent, listCustomers shows assigned worker names', asy
   let customers = await listCustomers(eventId);
   assert.equal(customers.length, 1);
   assert.equal(customers[0].qboId, fx.customerId);
-  assert.deepEqual(customers[0].workers, []);
+  assert.deepEqual(customers[0].mechanics, []);
   assert.equal(customers[0].batchStatus, null);
 
-  const worker = await addWorkerToEvent({ eventId, newStaff: { name: 'Nia' } }, admin);
-  assert.ok(worker.ok);
-  await assign(worker.workerId, fx.customerId, admin);
+  const mechanic = await addMechanicToEvent({ eventId, newStaff: { name: 'Nia' } }, admin);
+  assert.ok(mechanic.ok);
+  await assign(mechanic.mechanicId, fx.customerId, admin);
 
   customers = await listCustomers(eventId);
-  assert.deepEqual(customers[0].workers, ['Nia']);
+  assert.deepEqual(customers[0].mechanics, ['Nia']);
 
-  // The fixture event's workers are assigned to the same customer but must not leak here.
-  assert.equal(customers[0].workers.length, 1);
+  // The fixture event's mechanics are assigned to the same customer but must not leak here.
+  assert.equal(customers[0].mechanics.length, 1);
 });
 
 test('removeCustomer undoes a mis-add but is refused once there is history', async (t) => {
   if (!dbAvailable) return t.skip();
   const eventId = await freshEvent();
-  const worker = await addWorkerToEvent({ eventId, newStaff: { name: 'Nia' } }, admin);
-  assert.ok(worker.ok);
-  await assign(worker.workerId, fx.customerId, admin);
+  const mechanic = await addMechanicToEvent({ eventId, newStaff: { name: 'Nia' } }, admin);
+  assert.ok(mechanic.ok);
+  await assign(mechanic.mechanicId, fx.customerId, admin);
 
-  // Clean removal also drops the assignment, so the worker stops seeing the customer.
+  // Clean removal also drops the assignment, so the mechanic stops seeing the customer.
   assert.deepEqual(await removeCustomer(eventId, fx.customerId, admin), { ok: true });
   assert.deepEqual(await listCustomers(eventId), []);
-  const assignments = await pool.query('SELECT count(*) FROM assignments WHERE worker_id = $1', [
-    worker.workerId,
+  const assignments = await pool.query('SELECT count(*) FROM assignments WHERE mechanic_id = $1', [
+    mechanic.mechanicId,
   ]);
   assert.equal(assignments.rows[0].count, '0');
 
@@ -299,9 +299,9 @@ test('removeCustomer undoes a mis-add but is refused once there is history', asy
   });
 
   // Now record something, and the participation row becomes load-bearing history (§31).
-  await assign(worker.workerId, fx.customerId, admin);
+  await assign(mechanic.mechanicId, fx.customerId, admin);
   const wrote = await setUsageQty({
-    workerId: worker.workerId,
+    mechanicId: mechanic.mechanicId,
     eventId,
     customerId: fx.customerId,
     itemId: fx.itemId,
@@ -317,62 +317,62 @@ test('removeCustomer undoes a mis-add but is refused once there is history', asy
 });
 
 // ---------------------------------------------------------------------------
-// Workers and credentials
+// Mechanics and credentials
 // ---------------------------------------------------------------------------
 
-test('addWorkerToEvent creates the person, returns a working link, and is idempotent', async (t) => {
+test('addMechanicToEvent creates the person, returns a working link, and is idempotent', async (t) => {
   if (!dbAvailable) return t.skip();
   const eventId = await freshEvent();
 
-  const added = await addWorkerToEvent({ eventId, newStaff: { name: 'Nia', language: 'es' } }, admin);
+  const added = await addMechanicToEvent({ eventId, newStaff: { name: 'Nia', language: 'es' } }, admin);
   assert.ok(added.ok);
   assert.ok(added.link, 'a brand-new participation must return its one-time link');
   assert.equal(added.name, 'Nia');
 
   // The link actually authenticates, and carries the language copied from staff.
-  const session = await workerByToken(tokenOf(added.link));
+  const session = await mechanicByToken(tokenOf(added.link));
   assert.ok(session);
-  assert.equal(session.id, added.workerId);
+  assert.equal(session.id, added.mechanicId);
   assert.equal(session.staff_id, added.staffId);
   assert.equal(session.language, 'es');
   assert.equal(session.event_code, await codeOf(eventId));
 
   // Only the hash is stored — the plaintext exists nowhere in the database.
-  const stored = await pool.query('SELECT token_hash FROM workers WHERE id = $1', [added.workerId]);
+  const stored = await pool.query('SELECT token_hash FROM mechanics WHERE id = $1', [added.mechanicId]);
   assert.notEqual(stored.rows[0].token_hash, tokenOf(added.link));
 
-  // Re-adding the same person: same worker row, and no link, because the token is not
+  // Re-adding the same person: same mechanic row, and no link, because the token is not
   // recoverable from its hash. The UI offers "rotate" instead.
-  const again = await addWorkerToEvent({ eventId, staffId: added.staffId }, admin);
+  const again = await addMechanicToEvent({ eventId, staffId: added.staffId }, admin);
   assert.ok(again.ok);
-  assert.equal(again.workerId, added.workerId);
+  assert.equal(again.mechanicId, added.mechanicId);
   assert.equal(again.link, null);
 
   // …and the original link still works: a duplicate add must not rotate someone out
   // mid-weekend.
-  assert.ok(await workerByToken(tokenOf(added.link)));
+  assert.ok(await mechanicByToken(tokenOf(added.link)));
 
-  const workers = await listWorkers(eventId);
-  assert.equal(workers.length, 1);
-  assert.equal(workers[0].hasToken, true);
+  const mechanics = await listMechanics(eventId);
+  assert.equal(mechanics.length, 1);
+  assert.equal(mechanics[0].hasToken, true);
 });
 
-test('addWorkerToEvent picks an existing person by id and rejects unknown ids and blank names', async (t) => {
+test('addMechanicToEvent picks an existing person by id and rejects unknown ids and blank names', async (t) => {
   if (!dbAvailable) return t.skip();
   const eventId = await freshEvent();
 
   const created = await createStaff({ name: 'Existing Person', language: 'es' });
   assert.ok(created.ok);
-  const added = await addWorkerToEvent({ eventId, staffId: created.staffId }, admin);
+  const added = await addMechanicToEvent({ eventId, staffId: created.staffId }, admin);
   assert.ok(added.ok);
   assert.equal(added.name, 'Existing Person');
   assert.equal(added.staffId, created.staffId);
 
-  assert.deepEqual(await addWorkerToEvent({ eventId, staffId: 999_999 }, admin), {
+  assert.deepEqual(await addMechanicToEvent({ eventId, staffId: 999_999 }, admin), {
     ok: false,
     reason: 'unknown-staff',
   });
-  assert.deepEqual(await addWorkerToEvent({ eventId, newStaff: { name: '  ' } }, admin), {
+  assert.deepEqual(await addMechanicToEvent({ eventId, newStaff: { name: '  ' } }, admin), {
     ok: false,
     reason: 'invalid-name',
   });
@@ -382,53 +382,53 @@ test('addWorkerToEvent picks an existing person by id and rejects unknown ids an
   assert.equal(staff.find((s) => s.id === created.staffId)?.eventCount, 1);
 });
 
-test('rotateWorkerToken issues a new link and kills the old one immediately', async (t) => {
+test('rotateMechanicToken issues a new link and kills the old one immediately', async (t) => {
   if (!dbAvailable) return t.skip();
   const eventId = await freshEvent();
-  const added = await addWorkerToEvent({ eventId, newStaff: { name: 'Nia' } }, admin);
+  const added = await addMechanicToEvent({ eventId, newStaff: { name: 'Nia' } }, admin);
   assert.ok(added.ok && added.link);
   const oldToken = tokenOf(added.link);
 
-  const rotated = await rotateWorkerToken(added.workerId, admin);
+  const rotated = await rotateMechanicToken(added.mechanicId, admin);
   assert.ok(rotated.ok);
   const newToken = tokenOf(rotated.link);
   assert.notEqual(newToken, oldToken);
 
-  assert.equal(await workerByToken(oldToken), undefined);
-  assert.equal((await workerByToken(newToken))?.id, added.workerId);
+  assert.equal(await mechanicByToken(oldToken), undefined);
+  assert.equal((await mechanicByToken(newToken))?.id, added.mechanicId);
 
-  assert.deepEqual(await rotateWorkerToken(999_999, admin), { ok: false, reason: 'unknown-worker' });
+  assert.deepEqual(await rotateMechanicToken(999_999, admin), { ok: false, reason: 'unknown-mechanic' });
 });
 
-test('removeWorkerFromEvent undoes a mis-add but never destroys entry history', async (t) => {
+test('removeMechanicFromEvent undoes a mis-add but never destroys entry history', async (t) => {
   if (!dbAvailable) return t.skip();
   const eventId = await freshEvent();
   await addCustomer(eventId, fx.customerId, admin);
 
-  const mistake = await addWorkerToEvent({ eventId, newStaff: { name: 'Wrong Person' } }, admin);
+  const mistake = await addMechanicToEvent({ eventId, newStaff: { name: 'Wrong Person' } }, admin);
   assert.ok(mistake.ok && mistake.link);
-  await assign(mistake.workerId, fx.customerId, admin);
-  assert.deepEqual(await removeWorkerFromEvent(mistake.workerId, admin), { ok: true });
-  assert.equal(await workerByToken(tokenOf(mistake.link)), undefined);
-  assert.equal((await listWorkers(eventId)).length, 0);
+  await assign(mistake.mechanicId, fx.customerId, admin);
+  assert.deepEqual(await removeMechanicFromEvent(mistake.mechanicId, admin), { ok: true });
+  assert.equal(await mechanicByToken(tokenOf(mistake.link)), undefined);
+  assert.equal((await listMechanics(eventId)).length, 0);
 
-  const real = await addWorkerToEvent({ eventId, newStaff: { name: 'Nia' } }, admin);
+  const real = await addMechanicToEvent({ eventId, newStaff: { name: 'Nia' } }, admin);
   assert.ok(real.ok);
-  await assign(real.workerId, fx.customerId, admin);
+  await assign(real.mechanicId, fx.customerId, admin);
   await setUsageQty({
-    workerId: real.workerId,
+    mechanicId: real.mechanicId,
     eventId,
     customerId: fx.customerId,
     itemId: fx.itemId,
     qty: 1,
   });
-  assert.deepEqual(await removeWorkerFromEvent(real.workerId, admin), {
+  assert.deepEqual(await removeMechanicFromEvent(real.mechanicId, admin), {
     ok: false,
     reason: 'has-submissions',
   });
-  assert.equal((await listWorkers(eventId)).length, 1);
+  assert.equal((await listMechanics(eventId)).length, 1);
 
-  assert.deepEqual(await removeWorkerFromEvent(999_999, admin), { ok: false, reason: 'unknown-worker' });
+  assert.deepEqual(await removeMechanicFromEvent(999_999, admin), { ok: false, reason: 'unknown-mechanic' });
 });
 
 // ---------------------------------------------------------------------------
@@ -438,44 +438,44 @@ test('removeWorkerFromEvent undoes a mis-add but never destroys entry history', 
 test('assign creates the participation row in the same transaction (§21)', async (t) => {
   if (!dbAvailable) return t.skip();
   const eventId = await freshEvent();
-  const worker = await addWorkerToEvent({ eventId, newStaff: { name: 'Nia' } }, admin);
-  assert.ok(worker.ok);
+  const mechanic = await addMechanicToEvent({ eventId, newStaff: { name: 'Nia' } }, admin);
+  assert.ok(mechanic.ok);
 
   // No addCustomer call — assigning implies participation.
   assert.deepEqual(await listCustomers(eventId), []);
-  assert.deepEqual(await assign(worker.workerId, fx.customerId, admin), { ok: true });
+  assert.deepEqual(await assign(mechanic.mechanicId, fx.customerId, admin), { ok: true });
 
   const customers = await listCustomers(eventId);
   assert.equal(customers.length, 1);
   assert.equal(customers[0].qboId, fx.customerId);
-  assert.deepEqual((await listWorkers(eventId))[0].customers, [fx.customerId]);
+  assert.deepEqual((await listMechanics(eventId))[0].customers, [fx.customerId]);
 
   // Repeat assign is a no-op, not a unique violation.
-  assert.deepEqual(await assign(worker.workerId, fx.customerId, admin), { ok: true });
-  assert.equal((await listWorkers(eventId))[0].customers.length, 1);
+  assert.deepEqual(await assign(mechanic.mechanicId, fx.customerId, admin), { ok: true });
+  assert.equal((await listMechanics(eventId))[0].customers.length, 1);
 
   // Unassign narrows access but leaves participation alone.
-  assert.deepEqual(await unassign(worker.workerId, fx.customerId, admin), { ok: true });
-  assert.deepEqual((await listWorkers(eventId))[0].customers, []);
+  assert.deepEqual(await unassign(mechanic.mechanicId, fx.customerId, admin), { ok: true });
+  assert.deepEqual((await listMechanics(eventId))[0].customers, []);
   assert.equal((await listCustomers(eventId)).length, 1);
 
-  assert.deepEqual(await assign(worker.workerId, 'no-such-customer', admin), {
+  assert.deepEqual(await assign(mechanic.mechanicId, 'no-such-customer', admin), {
     ok: false,
     reason: 'unknown-customer',
   });
-  assert.deepEqual(await assign(999_999, fx.customerId, admin), { ok: false, reason: 'unknown-worker' });
+  assert.deepEqual(await assign(999_999, fx.customerId, admin), { ok: false, reason: 'unknown-mechanic' });
 });
 
 test('assign and unassign each name the admin who did it, once', async (t) => {
   if (!dbAvailable) return t.skip();
   const eventId = await freshEvent();
-  const worker = await addWorkerToEvent({ eventId, newStaff: { name: 'Nia' } }, admin);
-  assert.ok(worker.ok);
+  const mechanic = await addMechanicToEvent({ eventId, newStaff: { name: 'Nia' } }, admin);
+  assert.ok(mechanic.ok);
 
-  await assign(worker.workerId, fx.customerId, admin);
-  await assign(worker.workerId, fx.customerId, admin); // no-op, must not log twice
-  await unassign(worker.workerId, fx.customerId, admin);
-  await unassign(worker.workerId, fx.customerId, admin); // no-op, must not log twice
+  await assign(mechanic.mechanicId, fx.customerId, admin);
+  await assign(mechanic.mechanicId, fx.customerId, admin); // no-op, must not log twice
+  await unassign(mechanic.mechanicId, fx.customerId, admin);
+  await unassign(mechanic.mechanicId, fx.customerId, admin); // no-op, must not log twice
 
   const { rows } = await pool.query<{ action: string; customer_qbo_id: string; detail: any }>(
     `SELECT action, customer_qbo_id, detail FROM admin_actions
@@ -490,20 +490,20 @@ test('assign and unassign each name the admin who did it, once', async (t) => {
   );
   for (const row of rows) {
     assert.equal(row.customer_qbo_id, fx.customerId);
-    assert.equal(row.detail.workerId, worker.workerId);
+    assert.equal(row.detail.mechanicId, mechanic.mechanicId);
     assert.equal(row.detail.by, admin.name);
   }
 });
 
 // ---------------------------------------------------------------------------
-// addWorkerAndAssign — the customers-tab workflow, in one transaction
+// addMechanicAndAssign — the customers-tab workflow, in one transaction
 // ---------------------------------------------------------------------------
 
-test('addWorkerAndAssign creates the person, the link, and the assignment together', async (t) => {
+test('addMechanicAndAssign creates the person, the link, and the assignment together', async (t) => {
   if (!dbAvailable) return t.skip();
   const eventId = await freshEvent();
 
-  const result = await addWorkerAndAssign(
+  const result = await addMechanicAndAssign(
     { eventId, newStaff: { name: 'Nia', language: 'es' } },
     fx.customerId,
     admin
@@ -512,39 +512,39 @@ test('addWorkerAndAssign creates the person, the link, and the assignment togeth
   assert.equal(result.name, 'Nia');
   assert.ok(result.link, 'a brand-new participation must return its one-time link');
 
-  // The link authenticates, exactly as the plain add-worker path does.
-  const session = await workerByToken(tokenOf(result.link));
+  // The link authenticates, exactly as the plain add-mechanic path does.
+  const session = await mechanicByToken(tokenOf(result.link));
   assert.ok(session);
-  assert.equal(session.id, result.workerId);
+  assert.equal(session.id, result.mechanicId);
   assert.equal(session.language, 'es');
 
   // …and the assignment (plus the implied participation, §21) is there.
-  assert.deepEqual((await listWorkers(eventId))[0].customers, [fx.customerId]);
+  assert.deepEqual((await listMechanics(eventId))[0].customers, [fx.customerId]);
   const customers = await listCustomers(eventId);
   assert.equal(customers.length, 1);
-  assert.deepEqual(customers[0].workers, ['Nia']);
+  assert.deepEqual(customers[0].mechanics, ['Nia']);
 });
 
-test('addWorkerAndAssign for someone already on the event still assigns them', async (t) => {
+test('addMechanicAndAssign for someone already on the event still assigns them', async (t) => {
   if (!dbAvailable) return t.skip();
   const eventId = await freshEvent();
-  const first = await addWorkerToEvent({ eventId, newStaff: { name: 'Nia' } }, admin);
+  const first = await addMechanicToEvent({ eventId, newStaff: { name: 'Nia' } }, admin);
   assert.ok(first.ok);
 
   // The case a naive early-return would silently skip: the add half is a no-op, so it
   // returns link: null — but the assignment is the whole reason the manager clicked.
-  const again = await addWorkerAndAssign({ eventId, staffId: first.staffId }, fx.customerId, admin);
+  const again = await addMechanicAndAssign({ eventId, staffId: first.staffId }, fx.customerId, admin);
   assert.ok(again.ok);
-  assert.equal(again.workerId, first.workerId);
+  assert.equal(again.mechanicId, first.mechanicId);
   assert.equal(again.link, null, 'no second link: the token is never rotated out from under them');
-  assert.deepEqual((await listWorkers(eventId))[0].customers, [fx.customerId]);
+  assert.deepEqual((await listMechanics(eventId))[0].customers, [fx.customerId]);
 });
 
-test('addWorkerAndAssign rolls the worker back when the assignment fails', async (t) => {
+test('addMechanicAndAssign rolls the mechanic back when the assignment fails', async (t) => {
   if (!dbAvailable) return t.skip();
   const eventId = await freshEvent();
 
-  const result = await addWorkerAndAssign(
+  const result = await addMechanicAndAssign(
     { eventId, newStaff: { name: 'Rollback Rita' } },
     'no-such-customer',
     admin
@@ -555,9 +555,9 @@ test('addWorkerAndAssign rolls the worker back when the assignment fails', async
   // have left Rita on the event holding a live magic link with nothing assigned.
   const staff = await pool.query('SELECT 1 FROM staff WHERE name = $1', ['Rollback Rita']);
   assert.equal(staff.rowCount, 0, 'the staff identity must not survive');
-  assert.deepEqual(await listWorkers(eventId), [], 'the participation row must not survive');
+  assert.deepEqual(await listMechanics(eventId), [], 'the participation row must not survive');
   const logged = await pool.query(
-    `SELECT 1 FROM admin_actions WHERE event_id = $1 AND action = 'add-worker'`,
+    `SELECT 1 FROM admin_actions WHERE event_id = $1 AND action = 'add-mechanic'`,
     [eventId]
   );
   assert.equal(logged.rowCount, 0, 'the audit row must not survive either');
@@ -571,10 +571,10 @@ test('closeEvent refuses while customers are unposted, then force closes and des
   if (!dbAvailable) return t.skip();
   const eventId = await freshEvent();
   await addCustomer(eventId, fx.customerId, admin);
-  const worker = await addWorkerToEvent({ eventId, newStaff: { name: 'Nia' } }, admin);
-  assert.ok(worker.ok && worker.link);
-  const token = tokenOf(worker.link);
-  assert.ok(await workerByToken(token));
+  const mechanic = await addMechanicToEvent({ eventId, newStaff: { name: 'Nia' } }, admin);
+  assert.ok(mechanic.ok && mechanic.link);
+  const token = tokenOf(mechanic.link);
+  assert.ok(await mechanicByToken(token));
 
   const refused = await closeEvent(eventId, admin);
   assert.equal(refused.ok, false);
@@ -591,7 +591,7 @@ test('closeEvent refuses while customers are unposted, then force closes and des
   const stillOpen = await pool.query('SELECT active, closed_at FROM events WHERE id = $1', [eventId]);
   assert.equal(stillOpen.rows[0].active, true);
   assert.equal(stillOpen.rows[0].closed_at, null);
-  assert.ok(await workerByToken(token));
+  assert.ok(await mechanicByToken(token));
 
   const forced = await closeEvent(eventId, admin, { force: true });
   assert.deepEqual(forced, { ok: true, tokensRevoked: 1 });
@@ -601,9 +601,9 @@ test('closeEvent refuses while customers are unposted, then force closes and des
   assert.notEqual(closed.rows[0].closed_at, null);
 
   // §8: the credential is gone, not flagged — hash NULLed and the token no longer resolves.
-  assert.equal(await workerByToken(token), undefined);
-  const revoked = await pool.query('SELECT token_hash, token_revoked_at FROM workers WHERE id = $1', [
-    worker.workerId,
+  assert.equal(await mechanicByToken(token), undefined);
+  const revoked = await pool.query('SELECT token_hash, token_revoked_at FROM mechanics WHERE id = $1', [
+    mechanic.mechanicId,
   ]);
   assert.equal(revoked.rows[0].token_hash, null);
   assert.notEqual(revoked.rows[0].token_revoked_at, null);
@@ -638,21 +638,21 @@ test('closeEvent needs no override once every participating customer is POSTED',
 test('a closed event refuses every further mutation', async (t) => {
   if (!dbAvailable) return t.skip();
   const eventId = await freshEvent();
-  const worker = await addWorkerToEvent({ eventId, newStaff: { name: 'Nia' } }, admin);
-  assert.ok(worker.ok);
-  await assign(worker.workerId, fx.customerId, admin);
+  const mechanic = await addMechanicToEvent({ eventId, newStaff: { name: 'Nia' } }, admin);
+  assert.ok(mechanic.ok);
+  await assign(mechanic.mechanicId, fx.customerId, admin);
   assert.equal((await closeEvent(eventId, admin, { force: true })).ok, true);
 
   assert.deepEqual(await addCustomer(eventId, fx.customerId, admin), { ok: false, reason: 'event-closed' });
   assert.deepEqual(await removeCustomer(eventId, fx.customerId, admin), { ok: false, reason: 'event-closed' });
-  assert.deepEqual(await addWorkerToEvent({ eventId, newStaff: { name: 'Late' } }, admin), {
+  assert.deepEqual(await addMechanicToEvent({ eventId, newStaff: { name: 'Late' } }, admin), {
     ok: false,
     reason: 'event-closed',
   });
-  assert.deepEqual(await rotateWorkerToken(worker.workerId, admin), { ok: false, reason: 'event-closed' });
-  assert.deepEqual(await removeWorkerFromEvent(worker.workerId, admin), { ok: false, reason: 'event-closed' });
-  assert.deepEqual(await assign(worker.workerId, fx.customerId, admin), { ok: false, reason: 'event-closed' });
-  assert.deepEqual(await unassign(worker.workerId, fx.customerId, admin), { ok: false, reason: 'event-closed' });
+  assert.deepEqual(await rotateMechanicToken(mechanic.mechanicId, admin), { ok: false, reason: 'event-closed' });
+  assert.deepEqual(await removeMechanicFromEvent(mechanic.mechanicId, admin), { ok: false, reason: 'event-closed' });
+  assert.deepEqual(await assign(mechanic.mechanicId, fx.customerId, admin), { ok: false, reason: 'event-closed' });
+  assert.deepEqual(await unassign(mechanic.mechanicId, fx.customerId, admin), { ok: false, reason: 'event-closed' });
 });
 
 // ---------------------------------------------------------------------------
@@ -662,14 +662,14 @@ test('a closed event refuses every further mutation', async (t) => {
 test('listStaff carries the last event worked, and never offers the synthetic manager', async (t) => {
   if (!dbAvailable) return t.skip();
   const eventId = await freshEvent();
-  const added = await addWorkerToEvent({ eventId, newStaff: { name: 'Nia' } }, admin);
+  const added = await addMechanicToEvent({ eventId, newStaff: { name: 'Nia' } }, admin);
   assert.ok(added.ok);
 
-  // The manager is modelled as an is_admin worker with its own staff row (db/schema.sql).
+  // The manager is modelled as an is_admin mechanic with its own staff row (db/schema.sql).
   const managerStaff = await createStaff({ name: 'Manager' });
   assert.ok(managerStaff.ok);
   await pool.query(
-    `INSERT INTO workers (event_id, staff_id, name, is_admin) VALUES ($1, $2, 'Manager', TRUE)`,
+    `INSERT INTO mechanics (event_id, staff_id, name, is_admin) VALUES ($1, $2, 'Manager', TRUE)`,
     [eventId, managerStaff.staffId]
   );
 
@@ -677,7 +677,7 @@ test('listStaff carries the last event worked, and never offers the synthetic ma
   assert.equal(
     staff.some((s) => s.id === managerStaff.staffId),
     false,
-    'the synthetic manager must not appear in the worker picker'
+    'the synthetic manager must not appear in the mechanic picker'
   );
 
   const nia = staff.find((s) => s.id === added.staffId);

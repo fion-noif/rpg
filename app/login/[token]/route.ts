@@ -1,6 +1,6 @@
-// Magic-link login (design doc §14): validates the worker token and sets the session cookie.
+// Magic-link login (design doc §14): validates the mechanic token and sets the session cookie.
 import { NextRequest, NextResponse } from 'next/server';
-import { resolveToken, SESSION_COOKIE } from '@/src/workers';
+import { resolveToken, SESSION_COOKIE } from '@/src/mechanics';
 import { redirectBaseUrl } from '@/src/base-url';
 
 /** A week, as before — but now only ever a ceiling; see the `maxAge` note below. */
@@ -19,7 +19,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ token: stri
   const res = NextResponse.redirect(new URL(target, base));
   if (resolution.ok) {
     // Capped at the credential's own remaining life, not a flat week: a session that
-    // outlives the event it belongs to just turns into a 401 the worker cannot explain.
+    // outlives the event it belongs to just turns into a 401 the mechanic cannot explain.
     const untilExpiry = Math.floor((resolution.expiresAt.getTime() - Date.now()) / 1000);
     res.cookies.set(SESSION_COOKIE, token, {
       httpOnly: true,

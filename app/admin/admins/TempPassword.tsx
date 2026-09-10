@@ -3,7 +3,7 @@
 // One-time display of a generated admin password. Rendered from a Server Action's return
 // value — never from a URL, a cookie, or a re-read of the database (only the scrypt hash is
 // stored), so this is the single moment it is visible. Reloading loses it; reset to get a new
-// one. Deliberately the same component shape as MagicLink for worker tokens.
+// one. Deliberately the same component shape as MagicLink for mechanic tokens.
 import type { TempPasswordState } from './types';
 
 const MESSAGES: Record<string, string> = {

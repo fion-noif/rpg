@@ -1,9 +1,9 @@
-// The Customers / Workers switcher.
+// The Customers / Mechanics switcher.
 //
 // Plain <a> links over a `?tab=` param rather than client state, for a reason specific to
 // this page: every non-link mutation ends in a redirect (`finish()` in ./actions.ts), which
 // is a full navigation and would wipe client tab state — so unassigning a customer from the
-// Workers tab would answer by throwing you back to Customers. The URL is the only place tab
+// Mechanics tab would answer by throwing you back to Customers. The URL is the only place tab
 // state survives a redirect. It also makes a tab deep-linkable and works with JS off.
 //
 // `customers` is the default and is never written into the URL, so a plain
@@ -17,7 +17,7 @@ export function EventTabs({
 }: {
   eventId: number;
   tab: Tab;
-  counts: { customers: number; workers: number };
+  counts: { customers: number; mechanics: number };
 }) {
   const base = `/admin/events/${eventId}`;
   return (
@@ -25,8 +25,8 @@ export function EventTabs({
       <a href={base} aria-current={tab === 'customers' ? 'page' : undefined}>
         Customers <span className="count">{counts.customers}</span>
       </a>
-      <a href={`${base}?tab=workers`} aria-current={tab === 'workers' ? 'page' : undefined}>
-        Workers <span className="count">{counts.workers}</span>
+      <a href={`${base}?tab=mechanics`} aria-current={tab === 'mechanics' ? 'page' : undefined}>
+        Mechanics <span className="count">{counts.mechanics}</span>
       </a>
     </nav>
   );

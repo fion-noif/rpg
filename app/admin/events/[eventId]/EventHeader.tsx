@@ -1,10 +1,10 @@
 // The event-level strip that persists across both tabs: what this weekend is, when it runs,
 // and the one destructive thing you can do to it.
 //
-// Dates live here rather than on a tab because they are not a customers-or-workers concern —
-// they set when every worker's link stops working (end date + one day), so a manager fixing
+// Dates live here rather than on a tab because they are not a customers-or-mechanics concern —
+// they set when every mechanic's link stops working (end date + one day), so a manager fixing
 // a weekend that overran needs them reachable from wherever they are. Rotating a link cannot
-// do that job: a new token re-derives the same dead expiry (src/workers.ts).
+// do that job: a new token re-derives the same dead expiry (src/mechanics.ts).
 //
 // Server component: every control is a link or a Server Action form, so none of it needs JS.
 import { updateEventDatesAction } from './actions';
@@ -99,7 +99,7 @@ export function EventHeader({
                 Save dates
               </button>
               <p className="admin-note inline">
-                Worker links stop working at the end of the day after the event ends. Push the
+                Mechanic links stop working at the end of the day after the event ends. Push the
                 end date back to keep them alive; the event code never changes.
               </p>
             </form>

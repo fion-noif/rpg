@@ -5,7 +5,7 @@ import { test, before, beforeEach, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { pool } from './db';
 import { setUsageQty, usageForCustomer } from './usage';
-import { adminAddLine, adminSetQty, adminVoidLine, adminWorkerFor } from './admin-review';
+import { adminAddLine, adminSetQty, adminVoidLine, adminMechanicFor } from './admin-review';
 import { applySchema, resetSchema, seedAdmin, seedFixtures, type Fixtures } from './test-helpers';
 import type { AdminActor } from './admin/admins';
 
@@ -38,9 +38,9 @@ after(async () => {
   await pool.end();
 });
 
-async function workerLine(qty: number): Promise<void> {
+async function mechanicLine(qty: number): Promise<void> {
   const r = await setUsageQty({
-    workerId: fx.workerAId,
+    mechanicId: fx.mechanicAId,
     eventId: fx.eventId,
     customerId: fx.customerId,
     itemId: fx.itemId,
@@ -65,10 +65,10 @@ async function approve(): Promise<void> {
   );
 }
 
-test('adminWorkerFor is idempotent: one staff row per admin, one worker per event', async (t) => {
+test('adminMechanicFor is idempotent: one staff row per admin, one mechanic per event', async (t) => {
   if (!dbAvailable) return t.skip();
-  const a = await adminWorkerFor(pool, fx.eventId, admin);
-  const b = await adminWorkerFor(pool, fx.eventId, admin);
+  const a = await adminMechanicFor(pool, fx.eventId, admin);
+  const b = await adminMechanicFor(pool, fx.eventId, admin);
   assert.equal(a, b);
 
   // A second event reuses the same person, with its own participation row.
@@ -78,7 +78,7 @@ test('adminWorkerFor is idempotent: one staff row per admin, one worker per even
     `INSERT INTO events (code, name, start_date, end_date)
      VALUES ('T2', 'Other', CURRENT_DATE, CURRENT_DATE) RETURNING id`
   );
-  const c = await adminWorkerFor(pool, other.id, admin);
+  const c = await adminMechanicFor(pool, other.id, admin);
   assert.notEqual(c, a);
 
   // One staff row, found by admin_id and carrying the real name — not 'Manager'.
@@ -88,30 +88,30 @@ test('adminWorkerFor is idempotent: one staff row per admin, one worker per even
   assert.equal(staff[0].admin_id, admin.id);
 
   const { rows: admins } = await pool.query(
-    `SELECT event_id, name, token_hash FROM workers WHERE is_admin ORDER BY event_id`
+    `SELECT event_id, name, token_hash FROM mechanics WHERE is_admin ORDER BY event_id`
   );
   assert.equal(admins.length, 2);
   assert.deepEqual(
     admins.map((r) => r.name),
     ['Mike Rolison', 'Mike Rolison']
   );
-  // An admin is never reachable by a magic link (src/workers.ts hashes a token).
+  // An admin is never reachable by a magic link (src/mechanics.ts hashes a token).
   assert.deepEqual(
     admins.map((r) => r.token_hash),
     [null, null]
   );
 });
 
-test('two admins get their own staff row, worker row, and tab on the same event', async (t) => {
+test('two admins get their own staff row, mechanic row, and tab on the same event', async (t) => {
   if (!dbAvailable) return t.skip();
   const second = await seedAdmin(pool, { username: 'jsmith', name: 'Jane Smith', role: 'manager' });
 
-  const mine = await adminWorkerFor(pool, fx.eventId, admin);
-  const theirs = await adminWorkerFor(pool, fx.eventId, second);
+  const mine = await adminMechanicFor(pool, fx.eventId, admin);
+  const theirs = await adminMechanicFor(pool, fx.eventId, second);
   assert.notEqual(mine, theirs);
 
   const { rows } = await pool.query(
-    `SELECT w.name FROM workers w WHERE w.event_id = $1 AND w.is_admin ORDER BY w.name`,
+    `SELECT w.name FROM mechanics w WHERE w.event_id = $1 AND w.is_admin ORDER BY w.name`,
     [fx.eventId]
   );
   assert.deepEqual(
@@ -120,22 +120,22 @@ test('two admins get their own staff row, worker row, and tab on the same event'
   );
 });
 
-test('renaming an admin follows through to their staff row and their event workers', async (t) => {
+test('renaming an admin follows through to their staff row and their event mechanics', async (t) => {
   if (!dbAvailable) return t.skip();
-  await adminWorkerFor(pool, fx.eventId, admin);
+  await adminMechanicFor(pool, fx.eventId, admin);
   // admins.name is the single source of truth: an audit label that disagrees with the account
   // is worse than one that changes.
-  await adminWorkerFor(pool, fx.eventId, { id: admin.id, name: 'Michael Rolison' });
+  await adminMechanicFor(pool, fx.eventId, { id: admin.id, name: 'Michael Rolison' });
 
   const { rows: staff } = await pool.query(`SELECT name FROM staff WHERE admin_id = $1`, [admin.id]);
   assert.deepEqual(staff, [{ name: 'Michael Rolison' }]);
-  const { rows: workers } = await pool.query(`SELECT name FROM workers WHERE is_admin`);
-  assert.deepEqual(workers, [{ name: 'Michael Rolison' }]);
+  const { rows: mechanics } = await pool.query(`SELECT name FROM mechanics WHERE is_admin`);
+  assert.deepEqual(mechanics, [{ name: 'Michael Rolison' }]);
 });
 
 test('an adjustment stamps admin_actions.admin_id with the acting admin', async (t) => {
   if (!dbAvailable) return t.skip();
-  await workerLine(3);
+  await mechanicLine(3);
   await adminSetQty({ eventId: fx.eventId, customerId: fx.customerId, itemId: fx.itemId, qty: 5, admin });
 
   const log = await actions();
@@ -143,20 +143,20 @@ test('an adjustment stamps admin_actions.admin_id with the acting admin', async 
   assert.equal(log[0].admin_id, admin.id);
   assert.equal(log[0].detail.adminName, 'Mike Rolison');
 
-  // And the line itself is on a tab whose worker is named after the admin — this is what the
-  // review page, the worker screens and the CSV export all read.
+  // And the line itself is on a tab whose mechanic is named after the admin — this is what the
+  // review page, the mechanic screens and the CSV export all read.
   const { rows } = await pool.query(
     `SELECT w.name FROM submission_lines l
      JOIN submissions s ON s.id = l.submission_id
-     JOIN workers w ON w.id = s.worker_id
+     JOIN mechanics w ON w.id = s.mechanic_id
      WHERE l.voided_at IS NULL`
   );
   assert.deepEqual(rows, [{ name: 'Mike Rolison' }]);
 });
 
-test('an edit voids the worker line and puts the corrected qty on the manager tab', async (t) => {
+test('an edit voids the mechanic line and puts the corrected qty on the manager tab', async (t) => {
   if (!dbAvailable) return t.skip();
-  await workerLine(3);
+  await mechanicLine(3);
 
   const result = await adminSetQty({
     eventId: fx.eventId,
@@ -174,17 +174,17 @@ test('an edit voids the worker line and puts the corrected qty on the manager ta
   assert.equal(live[0].isAdmin, true);
   assert.equal(live[0].unitPrice, 9.5); // the original snapshot is carried over, not re-priced
 
-  // The worker's row is still there, voided and attributed to the manager (design doc §31).
-  const adminWorkerId = await adminWorkerFor(pool, fx.eventId, admin);
+  // The mechanic's row is still there, voided and attributed to the manager (design doc §31).
+  const adminMechanicId = await adminMechanicFor(pool, fx.eventId, admin);
   const { rows } = await pool.query(
-    `SELECT l.qty::float AS qty, l.voided_at, l.voided_by, s.worker_id
+    `SELECT l.qty::float AS qty, l.voided_at, l.voided_by, s.mechanic_id
      FROM submission_lines l JOIN submissions s ON s.id = l.submission_id
      WHERE l.voided_at IS NOT NULL`
   );
   assert.equal(rows.length, 1);
   assert.equal(rows[0].qty, 3);
-  assert.equal(rows[0].worker_id, fx.workerAId);
-  assert.equal(rows[0].voided_by, adminWorkerId);
+  assert.equal(rows[0].mechanic_id, fx.mechanicAId);
+  assert.equal(rows[0].voided_by, adminMechanicId);
   assert.notEqual(rows[0].voided_at, null);
 
   const log = await actions();
@@ -193,12 +193,12 @@ test('an edit voids the worker line and puts the corrected qty on the manager ta
   assert.equal(log[0].detail.before, 3);
   assert.equal(log[0].detail.after, 5);
   assert.equal(log[0].detail.itemId, fx.itemId);
-  assert.equal(log[0].detail.voided[0].workerId, fx.workerAId);
+  assert.equal(log[0].detail.voided[0].mechanicId, fx.mechanicAId);
 });
 
 test('editing again adjusts the manager line in place of a second void', async (t) => {
   if (!dbAvailable) return t.skip();
-  await workerLine(3);
+  await mechanicLine(3);
   await adminSetQty({ eventId: fx.eventId, customerId: fx.customerId, itemId: fx.itemId, qty: 5, admin });
   await adminSetQty({ eventId: fx.eventId, customerId: fx.customerId, itemId: fx.itemId, qty: 6, admin });
 
@@ -206,7 +206,7 @@ test('editing again adjusts the manager line in place of a second void', async (
   assert.equal(live.length, 1);
   assert.equal(live[0].qty, 6);
 
-  // One voided worker row, one live manager row — the second edit did not void anything.
+  // One voided mechanic row, one live manager row — the second edit did not void anything.
   const { rows } = await pool.query('SELECT count(*) FROM submission_lines');
   assert.equal(rows[0].count, '2');
   const log = await actions();
@@ -215,11 +215,11 @@ test('editing again adjusts the manager line in place of a second void', async (
   assert.equal(log[1].detail.after, 6);
 });
 
-test('an edit collapses two workers who recorded the same part onto one manager line', async (t) => {
+test('an edit collapses two mechanics who recorded the same part onto one manager line', async (t) => {
   if (!dbAvailable) return t.skip();
-  await workerLine(3);
+  await mechanicLine(3);
   await setUsageQty({
-    workerId: fx.workerBId,
+    mechanicId: fx.mechanicBId,
     eventId: fx.eventId,
     customerId: fx.customerId,
     itemId: fx.itemId,
@@ -279,7 +279,7 @@ test('adding a part creates a manager line; an inactive part is refused', async 
 
 test('a void removes the line from the live view but preserves the row', async (t) => {
   if (!dbAvailable) return t.skip();
-  await workerLine(3);
+  await mechanicLine(3);
   const [line] = await usageForCustomer(fx.eventId, fx.customerId);
 
   const result = await adminVoidLine({ eventId: fx.eventId, customerId: fx.customerId, lineId: line.id, admin });
@@ -287,17 +287,17 @@ test('a void removes the line from the live view but preserves the row', async (
 
   assert.equal((await usageForCustomer(fx.eventId, fx.customerId)).length, 0);
 
-  const adminWorkerId = await adminWorkerFor(pool, fx.eventId, admin);
+  const adminMechanicId = await adminMechanicFor(pool, fx.eventId, admin);
   const { rows } = await pool.query('SELECT qty::float AS qty, voided_by FROM submission_lines');
   assert.equal(rows.length, 1);
   assert.equal(rows[0].qty, 3);
-  assert.equal(rows[0].voided_by, adminWorkerId);
+  assert.equal(rows[0].voided_by, adminMechanicId);
 
   const log = await actions();
   assert.equal(log[0].action, 'void-line');
   assert.equal(log[0].detail.before, 3);
   assert.equal(log[0].detail.after, 0);
-  assert.equal(log[0].detail.voided[0].workerId, fx.workerAId);
+  assert.equal(log[0].detail.voided[0].mechanicId, fx.mechanicAId);
 
   // Voiding the same line twice is a no-op refusal, not a second audit entry.
   const again = await adminVoidLine({ eventId: fx.eventId, customerId: fx.customerId, lineId: line.id, admin });
@@ -307,7 +307,7 @@ test('a void removes the line from the live view but preserves the row', async (
 
 test('a line belonging to another event or customer is not reachable', async (t) => {
   if (!dbAvailable) return t.skip();
-  await workerLine(3);
+  await mechanicLine(3);
   const [line] = await usageForCustomer(fx.eventId, fx.customerId);
 
   await pool.query(
@@ -325,7 +325,7 @@ test('a line belonging to another event or customer is not reachable', async (t)
 
 test('every operation is refused once the customer has been approved', async (t) => {
   if (!dbAvailable) return t.skip();
-  await workerLine(3);
+  await mechanicLine(3);
   const [line] = await usageForCustomer(fx.eventId, fx.customerId);
   await approve();
 

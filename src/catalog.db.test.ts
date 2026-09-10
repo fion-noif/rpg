@@ -1,10 +1,10 @@
-// Integration tests for the worker/manager visibility split (owner's decision 09/06/2026),
+// Integration tests for the mechanic/manager visibility split (owner's decision 09/06/2026),
 // against a real Postgres database. Same skip-if-unreachable contract as the other `.db`
 // suites: no reachable `racing_test` means every case here skips rather than fails.
 //
 // The pure half of this feature is tested in src/qbo/catalog.test.ts. What can only be tested
 // here is that the SQL fragments actually *run* — and, more importantly, that the split is an
-// authorisation boundary and not just a filter on a dropdown: a worker holding a real service
+// authorisation boundary and not just a filter on a dropdown: a mechanic holding a real service
 // item's QuickBooks id must be refused by the write path, in the transaction.
 import { test, before, beforeEach, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -13,7 +13,7 @@ import { setUsageQty } from './usage';
 import { adminAddLine } from './admin-review';
 import { approveBatch, batchWithLines } from './charges';
 import { buildInvoiceBody } from './qbo/invoice';
-import { managerSellableItemSql, workerVisibleItemSql } from './catalog';
+import { managerSellableItemSql, mechanicVisibleItemSql } from './catalog';
 import { applySchema, resetSchema, seedAdmin, seedFixtures, type Fixtures } from './test-helpers';
 
 let dbAvailable = true;
@@ -49,15 +49,15 @@ after(async () => {
 // The two catalogue reads, run as SQL against real rows
 // ---------------------------------------------------------------------------
 
-test("the worker's catalogue query excludes services and SKU-less stock items", async (t) => {
+test("the mechanic's catalogue query excludes services and SKU-less stock items", async (t) => {
   if (!dbAvailable) return t.skip();
   const { rows } = await pool.query<{ qbo_id: string }>(
-    `SELECT qbo_id FROM items WHERE ${workerVisibleItemSql()} ORDER BY qbo_id`
+    `SELECT qbo_id FROM items WHERE ${mechanicVisibleItemSql()} ORDER BY qbo_id`
   );
   assert.deepEqual(
     rows.map((r) => r.qbo_id),
     [fx.itemId],
-    'only the active, SKU-bearing part is worker-visible'
+    'only the active, SKU-bearing part is mechanic-visible'
   );
 });
 
@@ -73,9 +73,9 @@ test("the manager's catalogue query includes the part AND the service", async (t
 
 test('the aliased fragment runs in the popular-parts join without an ambiguous column', async (t) => {
   if (!dbAvailable) return t.skip();
-  // A worker records a part; a manager adds a service. Only the part may come back.
+  // A mechanic records a part; a manager adds a service. Only the part may come back.
   await setUsageQty({
-    workerId: fx.workerAId,
+    mechanicId: fx.mechanicAId,
     eventId: fx.eventId,
     customerId: fx.customerId,
     itemId: fx.itemId,
@@ -95,7 +95,7 @@ test('the aliased fragment runs in the popular-parts join without an ambiguous c
      FROM submission_lines l
      JOIN submissions s ON s.id = l.submission_id
      JOIN items i ON i.qbo_id = l.item_qbo_id
-     WHERE s.event_id = $1 AND l.voided_at IS NULL AND ${workerVisibleItemSql('i')}
+     WHERE s.event_id = $1 AND l.voided_at IS NULL AND ${mechanicVisibleItemSql('i')}
      GROUP BY l.item_qbo_id ORDER BY SUM(l.qty) DESC LIMIT 5`,
     [fx.eventId]
   );
@@ -110,10 +110,10 @@ test('the aliased fragment runs in the popular-parts join without an ambiguous c
 // The authorisation boundary
 // ---------------------------------------------------------------------------
 
-test('a worker cannot record a service item even holding its real QuickBooks id', async (t) => {
+test('a mechanic cannot record a service item even holding its real QuickBooks id', async (t) => {
   if (!dbAvailable) return t.skip();
   const result = await setUsageQty({
-    workerId: fx.workerAId,
+    mechanicId: fx.mechanicAId,
     eventId: fx.eventId,
     customerId: fx.customerId,
     itemId: fx.serviceItemId,
@@ -132,13 +132,13 @@ test('a worker cannot record a service item even holding its real QuickBooks id'
   assert.equal(tabs.rows[0].n, 0);
 });
 
-test("a worker cannot record Intuit's SKU-less stock Services item either", async (t) => {
+test("a mechanic cannot record Intuit's SKU-less stock Services item either", async (t) => {
   if (!dbAvailable) return t.skip();
   // The belt-and-braces case: this row has no category at all, so only the
   // `sku IS NOT NULL` clause stops it. This is the assertion that stays true even if the
   // seeder's re-parent of items 1 and 2 is refused by QuickBooks.
   const result = await setUsageQty({
-    workerId: fx.workerAId,
+    mechanicId: fx.mechanicAId,
     eventId: fx.eventId,
     customerId: fx.customerId,
     itemId: fx.uncategorizedServiceItemId,
@@ -148,7 +148,7 @@ test("a worker cannot record Intuit's SKU-less stock Services item either", asyn
   assert.equal(result.ok === false && result.reason, 'unknown-item');
 });
 
-test('a manager CAN add the same service item a worker was refused', async (t) => {
+test('a manager CAN add the same service item a mechanic was refused', async (t) => {
   if (!dbAvailable) return t.skip();
   const result = await adminAddLine({
     eventId: fx.eventId,
@@ -164,13 +164,13 @@ test('a manager CAN add the same service item a worker was refused', async (t) =
   assert.equal(result.ok && result.line!.unitPrice, 100);
   assert.equal(result.ok && result.line!.sku, 'SVC-TEST-DAY');
 
-  // Attributed to the manager by name, on their own synthetic worker's tab, like any other
+  // Attributed to the manager by name, on their own synthetic mechanic's tab, like any other
   // §17 adjustment — the service path reuses adminAddLine rather than duplicating it.
   const { rows } = await pool.query<{ name: string; is_admin: boolean; action: string }>(
     `SELECT w.name, w.is_admin, a.action
      FROM submission_lines l
      JOIN submissions s ON s.id = l.submission_id
-     JOIN workers w ON w.id = s.worker_id
+     JOIN mechanics w ON w.id = s.mechanic_id
      JOIN admin_actions a ON a.event_id = s.event_id AND a.admin_id = $1
      WHERE l.voided_at IS NULL`,
     [admin.id]
@@ -217,8 +217,8 @@ async function seedApprovableCustomer(): Promise<void> {
     fx.eventId,
     POSTABLE_CUSTOMER,
   ]);
-  await pool.query('INSERT INTO assignments (worker_id, customer_qbo_id) VALUES ($1, $2)', [
-    fx.workerAId,
+  await pool.query('INSERT INTO assignments (mechanic_id, customer_qbo_id) VALUES ($1, $2)', [
+    fx.mechanicAId,
     POSTABLE_CUSTOMER,
   ]);
 }
@@ -227,9 +227,9 @@ test('a service line flows into charge_batch_lines and into the invoice body', a
   if (!dbAvailable) return t.skip();
   await seedApprovableCustomer();
 
-  // A worker's parts, plus a manager-added service line billed in days.
+  // A mechanic's parts, plus a manager-added service line billed in days.
   await setUsageQty({
-    workerId: fx.workerAId,
+    mechanicId: fx.mechanicAId,
     eventId: fx.eventId,
     customerId: POSTABLE_CUSTOMER,
     itemId: fx.itemId,

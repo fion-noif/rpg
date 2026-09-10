@@ -1,13 +1,13 @@
 'use client';
 
-// Add-worker form. A client component only because `useActionState` is how an App Router
+// Add-mechanic form. A client component only because `useActionState` is how an App Router
 // action hands a value back to the page — here, the magic link, which must be rendered
 // rather than redirected to (see ./actions.ts for why).
 //
 // With JavaScript off the form still submits (Next progressively enhances action forms) and
-// the worker is still added; only the one-time link is lost, which "Rotate link" recovers.
+// the mechanic is still added; only the one-time link is lost, which "Rotate link" recovers.
 import { useActionState } from 'react';
-import { addWorkerAction } from './actions';
+import { addMechanicAction } from './actions';
 import { MagicLink } from './MagicLink';
 import { emptyLinkState, type StaffOption } from './types';
 
@@ -15,8 +15,8 @@ import { emptyLinkState, type StaffOption } from './types';
 // Re-exported so this file stays the import site anything already pointing here expects.
 export type { StaffOption };
 
-export function AddWorkerForm({ eventId, staff }: { eventId: number; staff: StaffOption[] }) {
-  const [state, formAction, pending] = useActionState(addWorkerAction, emptyLinkState);
+export function AddMechanicForm({ eventId, staff }: { eventId: number; staff: StaffOption[] }) {
+  const [state, formAction, pending] = useActionState(addMechanicAction, emptyLinkState);
 
   return (
     <div>
@@ -54,7 +54,7 @@ export function AddWorkerForm({ eventId, staff }: { eventId: number; staff: Staf
         </div>
 
         <button className="admin-btn wide" type="submit" disabled={pending}>
-          {pending ? 'Adding…' : 'Add worker & create link'}
+          {pending ? 'Adding…' : 'Add mechanic & create link'}
         </button>
       </form>
 

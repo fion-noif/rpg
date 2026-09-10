@@ -4,7 +4,7 @@
 // a missing one. Every action is one PUT to /api/admin/lines followed by router.refresh(),
 // so what the manager sees after an edit is always re-read server state rather than an
 // optimistic guess — this page is the last stop before money goes to QuickBooks, and it is
-// used on a desk, not offline in a paddock (contrast app/WorkerApp.tsx's write-behind queue).
+// used on a desk, not offline in a paddock (contrast app/MechanicApp.tsx's write-behind queue).
 
 import { useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
@@ -35,7 +35,7 @@ export interface CatalogOption {
   name: string;
   description: string | null;
   price: number | null;
-  /** True for the manager-only service items. Workers never receive one of these. */
+  /** True for the manager-only service items. Mechanics never receive one of these. */
   isService: boolean;
 }
 
@@ -111,7 +111,7 @@ export default function CustomerReview(props: {
         isService: line.isService,
       };
       g.qty += line.qty;
-      // Two workers can have recorded the same part at different price snapshots
+      // Two mechanics can have recorded the same part at different price snapshots
       // (design doc §16). Sum the money rather than the fictional single unit price, and
       // blank the unit-price column when they disagree so the number is never misleading.
       if (g.lineIds.length > 0 && g.unitPrice !== line.unitPrice) g.unitPrice = null;
@@ -186,7 +186,7 @@ export default function CustomerReview(props: {
 
   async function removeGroup(group: ItemGroup) {
     // Voiding is per line (each carries its own author for the audit trail), so a part two
-    // workers both recorded takes one call each.
+    // mechanics both recorded takes one call each.
     for (const lineId of group.lineIds) {
       if (!(await send({ op: 'void', lineId }))) return;
     }
@@ -213,7 +213,7 @@ export default function CustomerReview(props: {
 
   /**
    * Add a service line — the same `op: 'add'` the parts path uses, so this reuses
-   * `adminAddLine` and its lock, snapshot, void-the-worker's-line and `admin_actions`
+   * `adminAddLine` and its lock, snapshot, void-the-mechanic's-line and `admin_actions`
    * behaviour verbatim (src/admin-review.ts). The only difference is what the quantity means
    * to the person typing it: days, not units.
    */
@@ -242,7 +242,7 @@ export default function CustomerReview(props: {
       {error && <div className="admin-alert">{error}</div>}
       {locked && (
         <div className="admin-alert">
-          Approved ({props.batch!.status}) — this customer&rsquo;s parts are locked. Workers and
+          Approved ({props.batch!.status}) — this customer&rsquo;s parts are locked. Mechanics and
           the manager can no longer change them.
         </div>
       )}
@@ -389,14 +389,14 @@ export default function CustomerReview(props: {
       </div>
 
       {/* Services: a separate card, not another row in the picker above. Managers only —
-          workers never see these items at all (§8), and their unit is a race day, so putting
+          mechanics never see these items at all (§8), and their unit is a race day, so putting
           them next to per-unit parts in one list invites exactly the wrong arithmetic. */}
       {serviceOptions.length > 0 && (
         <div className="admin-card admin-add-service">
           <h2>Add a service</h2>
           <p className="admin-note">
             Services are billed <strong>by the race day</strong> — enter the number of days, not a
-            quantity. Workers cannot see or record these; only managers can add them, and the line
+            quantity. Mechanics cannot see or record these; only managers can add them, and the line
             is attributed to you by name.
           </p>
           <div className="admin-add-row">
@@ -677,7 +677,7 @@ function ApprovePost(props: {
                 className="admin-btn secondary"
                 disabled={busy}
                 onClick={() => {
-                  if (!confirm('Un-approve this customer? The approved invoice lines are discarded and workers can edit again.')) return;
+                  if (!confirm('Un-approve this customer? The approved invoice lines are discarded and mechanics can edit again.')) return;
                   void call(`/api/admin/batches/${batch.id}/unapprove`);
                 }}
               >

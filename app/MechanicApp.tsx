@@ -40,7 +40,7 @@ function saveQueue(queue: UsageOp[]) {
 }
 
 // Popular/search rows are for selection only — no quantity shown here. Tapping Add always
-// adds one more to the worker's own line; adjusting or removing an amount happens in the
+// adds one more to the mechanic's own line; adjusting or removing an amount happens in the
 // used-parts list below, which is where a quantity is meaningful.
 function PartRow({
   item,
@@ -66,8 +66,8 @@ function PartRow({
   );
 }
 
-export default function WorkerApp(props: {
-  worker: { id: number; name: string; language: Lang; eventName: string };
+export default function MechanicApp(props: {
+  mechanic: { id: number; name: string; language: Lang; eventName: string };
   customers: Customer[];
   catalog: CatalogItem[];
   popularIds: string[];
@@ -80,7 +80,7 @@ export default function WorkerApp(props: {
   lockedByCustomer: Record<string, boolean>;
 }) {
   const { customers, catalog, popularIds } = props;
-  const [lang, setLang] = useState<Lang>(props.worker.language);
+  const [lang, setLang] = useState<Lang>(props.mechanic.language);
   const t = strings[lang];
 
   const [customerId, setCustomerId] = useState<string | null>(
@@ -132,7 +132,7 @@ export default function WorkerApp(props: {
             touched.add(op.customerId);
           } else {
             // Rejected — do not retry forever; drop and surface it (design doc §31 durability
-            // rule cuts the other way here: the worker must know a write did NOT land).
+            // rule cuts the other way here: the mechanic must know a write did NOT land).
             // `tab-locked` gets its own message: the manager approved this customer, so the
             // app is working exactly as intended and "try again" would be a lie.
             const body = await res.text();
@@ -173,7 +173,7 @@ export default function WorkerApp(props: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Pick up edits made by other workers (or from an earlier session) while this one is open.
+  // Pick up edits made by other mechanics (or from an earlier session) while this one is open.
   useEffect(() => {
     if (customerId) refreshUsage(customerId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -219,20 +219,20 @@ export default function WorkerApp(props: {
         itemName: existing?.itemName ?? catalogItem?.name ?? op.itemId,
         unitPrice: existing?.unitPrice ?? catalogItem?.price ?? null,
         qty: op.qty,
-        workerId: props.worker.id,
-        workerName: props.worker.name,
+        mechanicId: props.mechanic.id,
+        mechanicName: props.mechanic.name,
         updatedAt: new Date().toISOString(),
         pending: true,
       });
     }
     return [...byItem.values()].sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1));
-  }, [usage, queue, customer, catalogById, props.worker.id, props.worker.name]);
+  }, [usage, queue, customer, catalogById, props.mechanic.id, props.mechanic.name]);
 
   const myQty = useMemo(() => {
     const m = new Map<string, number>();
-    for (const line of displayLines) if (line.workerId === props.worker.id) m.set(line.itemId, line.qty);
+    for (const line of displayLines) if (line.mechanicId === props.mechanic.id) m.set(line.itemId, line.qty);
     return m;
-  }, [displayLines, props.worker.id]);
+  }, [displayLines, props.mechanic.id]);
 
   function setQty(itemId: string, qty: number) {
     if (!customer || locked) return;
@@ -249,13 +249,13 @@ export default function WorkerApp(props: {
   return (
     <div className="wrap">
       <div className="topbar">
-        <span className="who">{props.worker.name}</span>
+        <span className="who">{props.mechanic.name}</span>
         <button className="lang-toggle" onClick={toggleLang}>
           {lang === 'en' ? 'Español' : 'English'}
         </button>
       </div>
 
-      {/* A worker whose manager has not assigned them anyone yet. Without this the page is a
+      {/* A mechanic whose manager has not assigned them anyone yet. Without this the page is a
           dead end: no customer bar, no tabs, no parts list, and — because there is nothing
           queued — a cheerful "Saved ✓". Say which step is missing, and whose step it is. */}
       {customers.length === 0 && <div className="empty">{t.noCustomers}</div>}
@@ -288,7 +288,7 @@ export default function WorkerApp(props: {
         </div>
       )}
       {/* Gated on having somewhere to record: "Saved ✓" with nothing assigned reads as
-          "everything is fine", which is the opposite of what that worker needs to know. */}
+          "everything is fine", which is the opposite of what that mechanic needs to know. */}
       {customers.length > 0 && pendingCount === 0 && !saveError && !locked && (
         <div className="status-note ok">{t.confirmed} ✓</div>
       )}
@@ -302,7 +302,7 @@ export default function WorkerApp(props: {
           </div>
           {displayLines.length === 0 && <div className="empty">{t.nothingRecorded}</div>}
           {displayLines.map((line) => {
-            const mine = line.workerId === props.worker.id;
+            const mine = line.mechanicId === props.mechanic.id;
             return (
               <div className="usage-row" key={line.itemId}>
                 <div className="info">
@@ -312,12 +312,12 @@ export default function WorkerApp(props: {
                   </div>
                   {!mine && (
                     // Always the stored name (M3). Admin lines carry the admin's real name
-                    // now, because their staff row is named after their account — so a worker
+                    // now, because their staff row is named after their account — so a mechanic
                     // sees "by Mike Rolison", not "by Manager". The one exception needs no
                     // code: pre-M3 rows are literally named 'Manager', which is still the
                     // truthful label for a line the shared password recorded.
                     <div className="sku">
-                      {t.recordedBy} {line.workerName}
+                      {t.recordedBy} {line.mechanicName}
                     </div>
                   )}
                 </div>

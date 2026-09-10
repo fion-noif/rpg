@@ -2,7 +2,7 @@
 // event, in one list, with who recorded it — the manager reviews a customer, not dozens of
 // isolated transactions.
 //
-// Server Component / Client Component split mirrors app/page.tsx → app/WorkerApp.tsx: this
+// Server Component / Client Component split mirrors app/page.tsx → app/MechanicApp.tsx: this
 // file does auth + the reads, CustomerReview.tsx owns the edit interactions.
 import { notFound } from 'next/navigation';
 import { q } from '@/src/db';
@@ -22,14 +22,14 @@ interface LineRow {
   qty: number;
   updated_at: string;
   voided_at: string | null;
-  worker_name: string;
+  mechanic_name: string;
   voided_by_name: string | null;
   category: string | null;
 }
 
 /**
- * The stored name, always (M3). An admin's worker row is named after their account, so this
- * reads "Mike Rolison" for a manager adjustment and the worker's name for everything else;
+ * The stored name, always (M3). An admin's mechanic row is named after their account, so this
+ * reads "Mike Rolison" for a manager adjustment and the mechanic's name for everything else;
  * `is_admin` survives only as the flag that styles the row, not as a label substitute.
  * Pre-M3 admin rows are literally named 'Manager', which is the truthful label for them.
  */
@@ -70,11 +70,11 @@ export default async function CustomerReviewPage({
   const rows = await q<LineRow>(
     `SELECT l.id, l.item_qbo_id AS item_id, l.sku, l.item_name, l.unit_price::float AS unit_price,
             l.qty::float AS qty, l.updated_at, l.voided_at,
-            w.name AS worker_name, vb.name AS voided_by_name, i.category
+            w.name AS mechanic_name, vb.name AS voided_by_name, i.category
      FROM submission_lines l
      JOIN submissions s ON s.id = l.submission_id
-     JOIN workers w ON w.id = s.worker_id
-     LEFT JOIN workers vb ON vb.id = l.voided_by
+     JOIN mechanics w ON w.id = s.mechanic_id
+     LEFT JOIN mechanics vb ON vb.id = l.voided_by
      LEFT JOIN items i ON i.qbo_id = l.item_qbo_id
      WHERE s.event_id = $1 AND s.customer_qbo_id = $2
      ORDER BY l.item_name, l.id`,
@@ -90,13 +90,13 @@ export default async function CustomerReviewPage({
     qty: r.qty,
     updatedAt: new Date(r.updated_at).toISOString(),
     voided: r.voided_at != null,
-    submittedBy: submitter(r.worker_name),
+    submittedBy: submitter(r.mechanic_name),
     voidedBy: r.voided_at ? submitter(r.voided_by_name) : null,
     isService: isManagerOnlyCategory(r.category),
   }));
 
   // Only what QuickBooks still sells is addable (design doc §9, §23 Rule 3) — but *wider*
-  // than the worker catalogue in app/page.tsx: the manager's list is parts **plus** the
+  // than the mechanic catalogue in app/page.tsx: the manager's list is parts **plus** the
   // manager-only `Race Services` items (owner's decision 09/06/2026, §17). `category` comes
   // back so the picker can group services separately and label their quantity as days.
   const catalogRows = await q<CatalogOption & { category: string | null }>(
@@ -110,7 +110,7 @@ export default async function CustomerReviewPage({
     isService: isManagerOnlyCategory(row.category),
   }));
 
-  // Approval closes the customer to any further change, worker or manager (plan §3), and the
+  // Approval closes the customer to any further change, mechanic or manager (plan §3), and the
   // batch row is also the whole state of the Approve & Post panel below.
   const batch = await batchFor(eventId, customerId);
   const approved = batch ? await batchWithLines(batch.id) : undefined;

@@ -110,7 +110,7 @@ export interface AdminCookieOptions {
 
 /**
  * `sameSite: 'strict'` is safe here because admin navigation always starts from
- * within the app (there is no cross-site OAuth bounce like the worker flow has).
+ * within the app (there is no cross-site OAuth bounce like the mechanic flow has).
  * `secure` follows APP_BASE_URL so local http dev still works.
  */
 export function isSecureBaseUrl(baseUrl: string): boolean {

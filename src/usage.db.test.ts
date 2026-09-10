@@ -37,7 +37,7 @@ after(async () => {
 test('first write creates exactly one tab and one line, snapshotting the item price', async (t) => {
   if (!dbAvailable) return t.skip();
   const result = await setUsageQty({
-    workerId: fx.workerAId,
+    mechanicId: fx.mechanicAId,
     eventId: fx.eventId,
     customerId: fx.customerId,
     itemId: fx.itemId,
@@ -56,8 +56,8 @@ test('first write creates exactly one tab and one line, snapshotting the item pr
 
 test('a second write for the same item sets qty rather than incrementing, reusing the tab', async (t) => {
   if (!dbAvailable) return t.skip();
-  await setUsageQty({ workerId: fx.workerAId, eventId: fx.eventId, customerId: fx.customerId, itemId: fx.itemId, qty: 3 });
-  await setUsageQty({ workerId: fx.workerAId, eventId: fx.eventId, customerId: fx.customerId, itemId: fx.itemId, qty: 7 });
+  await setUsageQty({ mechanicId: fx.mechanicAId, eventId: fx.eventId, customerId: fx.customerId, itemId: fx.itemId, qty: 3 });
+  await setUsageQty({ mechanicId: fx.mechanicAId, eventId: fx.eventId, customerId: fx.customerId, itemId: fx.itemId, qty: 7 });
 
   const lines = await usageForCustomer(fx.eventId, fx.customerId);
   assert.equal(lines.length, 1);
@@ -70,7 +70,7 @@ test('a second write for the same item sets qty rather than incrementing, reusin
 test('idempotency: the identical write applied three times leaves qty unchanged', async (t) => {
   if (!dbAvailable) return t.skip();
   for (let i = 0; i < 3; i++) {
-    await setUsageQty({ workerId: fx.workerAId, eventId: fx.eventId, customerId: fx.customerId, itemId: fx.itemId, qty: 4 });
+    await setUsageQty({ mechanicId: fx.mechanicAId, eventId: fx.eventId, customerId: fx.customerId, itemId: fx.itemId, qty: 4 });
   }
   const lines = await usageForCustomer(fx.eventId, fx.customerId);
   assert.equal(lines.length, 1);
@@ -79,9 +79,9 @@ test('idempotency: the identical write applied three times leaves qty unchanged'
 
 test('qty 0 voids the line (not deletes it); a later add creates a fresh live line', async (t) => {
   if (!dbAvailable) return t.skip();
-  await setUsageQty({ workerId: fx.workerAId, eventId: fx.eventId, customerId: fx.customerId, itemId: fx.itemId, qty: 2 });
+  await setUsageQty({ mechanicId: fx.mechanicAId, eventId: fx.eventId, customerId: fx.customerId, itemId: fx.itemId, qty: 2 });
   const voided = await setUsageQty({
-    workerId: fx.workerAId,
+    mechanicId: fx.mechanicAId,
     eventId: fx.eventId,
     customerId: fx.customerId,
     itemId: fx.itemId,
@@ -97,7 +97,7 @@ test('qty 0 voids the line (not deletes it); a later add creates a fresh live li
   assert.equal(raw.length, 1); // row survives — soft delete, not a real delete
   assert.notEqual(raw[0].voided_at, null);
 
-  await setUsageQty({ workerId: fx.workerAId, eventId: fx.eventId, customerId: fx.customerId, itemId: fx.itemId, qty: 5 });
+  await setUsageQty({ mechanicId: fx.mechanicAId, eventId: fx.eventId, customerId: fx.customerId, itemId: fx.itemId, qty: 5 });
   lines = await usageForCustomer(fx.eventId, fx.customerId);
   assert.equal(lines.length, 1);
   assert.equal(lines[0].qty, 5);
@@ -106,30 +106,30 @@ test('qty 0 voids the line (not deletes it); a later add creates a fresh live li
   assert.equal(raw2[0].count, '2'); // the voided row plus the fresh live one
 });
 
-test('each worker keeps an independent line for the same item; both are visible together', async (t) => {
+test('each mechanic keeps an independent line for the same item; both are visible together', async (t) => {
   if (!dbAvailable) return t.skip();
-  await setUsageQty({ workerId: fx.workerAId, eventId: fx.eventId, customerId: fx.customerId, itemId: fx.itemId, qty: 2 });
-  await setUsageQty({ workerId: fx.workerBId, eventId: fx.eventId, customerId: fx.customerId, itemId: fx.itemId, qty: 5 });
+  await setUsageQty({ mechanicId: fx.mechanicAId, eventId: fx.eventId, customerId: fx.customerId, itemId: fx.itemId, qty: 2 });
+  await setUsageQty({ mechanicId: fx.mechanicBId, eventId: fx.eventId, customerId: fx.customerId, itemId: fx.itemId, qty: 5 });
 
   const lines = await usageForCustomer(fx.eventId, fx.customerId);
   assert.equal(lines.length, 2);
-  const byWorker = new Map(lines.map((l) => [l.workerId, l.qty]));
-  assert.equal(byWorker.get(fx.workerAId), 2);
-  assert.equal(byWorker.get(fx.workerBId), 5);
+  const byMechanic = new Map(lines.map((l) => [l.mechanicId, l.qty]));
+  assert.equal(byMechanic.get(fx.mechanicAId), 2);
+  assert.equal(byMechanic.get(fx.mechanicBId), 5);
 
-  // Worker B's write only ever touches worker B's own tab — ownership is structural, so
-  // there's no cross-worker collision to reject.
-  await setUsageQty({ workerId: fx.workerBId, eventId: fx.eventId, customerId: fx.customerId, itemId: fx.itemId, qty: 9 });
+  // Mechanic B's write only ever touches mechanic B's own tab — ownership is structural, so
+  // there's no cross-mechanic collision to reject.
+  await setUsageQty({ mechanicId: fx.mechanicBId, eventId: fx.eventId, customerId: fx.customerId, itemId: fx.itemId, qty: 9 });
   const after = await usageForCustomer(fx.eventId, fx.customerId);
-  const byWorkerAfter = new Map(after.map((l) => [l.workerId, l.qty]));
-  assert.equal(byWorkerAfter.get(fx.workerAId), 2);
-  assert.equal(byWorkerAfter.get(fx.workerBId), 9);
+  const byMechanicAfter = new Map(after.map((l) => [l.mechanicId, l.qty]));
+  assert.equal(byMechanicAfter.get(fx.mechanicAId), 2);
+  assert.equal(byMechanicAfter.get(fx.mechanicBId), 9);
 });
 
 test('an unknown or inactive item is rejected and nothing is committed', async (t) => {
   if (!dbAvailable) return t.skip();
   const r1 = await setUsageQty({
-    workerId: fx.workerAId,
+    mechanicId: fx.mechanicAId,
     eventId: fx.eventId,
     customerId: fx.customerId,
     itemId: 'does-not-exist',
@@ -138,7 +138,7 @@ test('an unknown or inactive item is rejected and nothing is committed', async (
   assert.deepEqual(r1, { ok: false, reason: 'unknown-item' });
 
   const r2 = await setUsageQty({
-    workerId: fx.workerAId,
+    mechanicId: fx.mechanicAId,
     eventId: fx.eventId,
     customerId: fx.customerId,
     itemId: fx.inactiveItemId,
@@ -152,11 +152,11 @@ test('an unknown or inactive item is rejected and nothing is committed', async (
 
 test('writes are rejected once the tab is no longer SUBMITTED', async (t) => {
   if (!dbAvailable) return t.skip();
-  await setUsageQty({ workerId: fx.workerAId, eventId: fx.eventId, customerId: fx.customerId, itemId: fx.itemId, qty: 1 });
-  await pool.query(`UPDATE submissions SET status = 'APPROVED' WHERE worker_id = $1`, [fx.workerAId]);
+  await setUsageQty({ mechanicId: fx.mechanicAId, eventId: fx.eventId, customerId: fx.customerId, itemId: fx.itemId, qty: 1 });
+  await pool.query(`UPDATE submissions SET status = 'APPROVED' WHERE mechanic_id = $1`, [fx.mechanicAId]);
 
   const result = await setUsageQty({
-    workerId: fx.workerAId,
+    mechanicId: fx.mechanicAId,
     eventId: fx.eventId,
     customerId: fx.customerId,
     itemId: fx.itemId,
@@ -178,7 +178,7 @@ test('a customer that does not participate in the event is refused', async (t) =
   );
 
   const result = await setUsageQty({
-    workerId: fx.workerAId,
+    mechanicId: fx.mechanicAId,
     eventId: fx.eventId,
     customerId: 'cust-2',
     itemId: fx.itemId,
@@ -190,9 +190,9 @@ test('a customer that does not participate in the event is refused', async (t) =
   assert.equal(rows[0].count, '0'); // no tab was created on the way to the rejection
 });
 
-test('once the customer has a charge batch, even a worker with no tab is refused', async (t) => {
+test('once the customer has a charge batch, even a mechanic with no tab is refused', async (t) => {
   if (!dbAvailable) return t.skip();
-  // The race variant the tab-status check alone misses: worker B has never written for this
+  // The race variant the tab-status check alone misses: mechanic B has never written for this
   // customer, so there is no tab to find in a non-SUBMITTED state. The batch row is what
   // makes "this customer is approved" knowable (plan §3).
   await pool.query(
@@ -201,7 +201,7 @@ test('once the customer has a charge batch, even a worker with no tab is refused
   );
 
   const result = await setUsageQty({
-    workerId: fx.workerBId,
+    mechanicId: fx.mechanicBId,
     eventId: fx.eventId,
     customerId: fx.customerId,
     itemId: fx.itemId,
@@ -215,7 +215,7 @@ test('once the customer has a charge batch, even a worker with no tab is refused
 
 test('usageForCustomer flags manager lines so callers can label them', async (t) => {
   if (!dbAvailable) return t.skip();
-  await setUsageQty({ workerId: fx.workerAId, eventId: fx.eventId, customerId: fx.customerId, itemId: fx.itemId, qty: 2 });
+  await setUsageQty({ mechanicId: fx.mechanicAId, eventId: fx.eventId, customerId: fx.customerId, itemId: fx.itemId, qty: 2 });
   const [line] = await usageForCustomer(fx.eventId, fx.customerId);
   assert.equal(line.isAdmin, false);
 });
@@ -223,9 +223,9 @@ test('usageForCustomer flags manager lines so callers can label them', async (t)
 test('concurrent first writes to a new tab still produce exactly one tab', async (t) => {
   if (!dbAvailable) return t.skip();
   await Promise.all([
-    setUsageQty({ workerId: fx.workerAId, eventId: fx.eventId, customerId: fx.customerId, itemId: fx.itemId, qty: 1 }),
-    setUsageQty({ workerId: fx.workerAId, eventId: fx.eventId, customerId: fx.customerId, itemId: fx.itemId, qty: 2 }),
+    setUsageQty({ mechanicId: fx.mechanicAId, eventId: fx.eventId, customerId: fx.customerId, itemId: fx.itemId, qty: 1 }),
+    setUsageQty({ mechanicId: fx.mechanicAId, eventId: fx.eventId, customerId: fx.customerId, itemId: fx.itemId, qty: 2 }),
   ]);
-  const { rows } = await pool.query('SELECT count(*) FROM submissions WHERE worker_id = $1', [fx.workerAId]);
+  const { rows } = await pool.query('SELECT count(*) FROM submissions WHERE mechanic_id = $1', [fx.mechanicAId]);
   assert.equal(rows[0].count, '1');
 });

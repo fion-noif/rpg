@@ -1,10 +1,10 @@
 import { cookies } from 'next/headers';
 import { q } from '@/src/db';
-import { resolveToken, assignmentsFor, SESSION_COOKIE } from '@/src/workers';
+import { resolveToken, assignmentsFor, SESSION_COOKIE } from '@/src/mechanics';
 import { usageForCustomer, type UsageLine } from '@/src/usage';
 import { strings } from '@/src/i18n';
-import { workerVisibleItemSql } from '@/src/catalog';
-import WorkerApp, { type CatalogItem } from './WorkerApp';
+import { mechanicVisibleItemSql } from '@/src/catalog';
+import MechanicApp, { type CatalogItem } from './MechanicApp';
 
 export const dynamic = 'force-dynamic';
 
@@ -23,7 +23,7 @@ export default async function Page({
     // nothing left here to inspect) and forwarded as `?link=`. Either is enough.
     const expired = resolution.reason === 'expired' || link === 'expired';
     const message = expired ? 'linkExpired' : 'noSession';
-    // Both languages, always: the worker who cannot get in is exactly the worker whose
+    // Both languages, always: the mechanic who cannot get in is exactly the mechanic whose
     // language preference we can no longer read.
     return (
       <div className="center-msg">
@@ -32,19 +32,19 @@ export default async function Page({
       </div>
     );
   }
-  const worker = resolution.worker;
+  const mechanic = resolution.mechanic;
 
-  const customers = await assignmentsFor(worker.id);
+  const customers = await assignmentsFor(mechanic.id);
 
-  // Physical parts only. Service items (`Race Services`) are manager-only — a worker records
+  // Physical parts only. Service items (`Race Services`) are manager-only — a mechanic records
   // what they fitted to a kart, not how many days of mechanic time to bill (§8 least
   // privilege). The rule lives in src/catalog.ts; before it, the bare
   // `type IN ('NonInventory','Service','Inventory')` filter here is what put Intuit's stock
-  // `Services` and `Hours` items on every worker's phone.
+  // `Services` and `Hours` items on every mechanic's phone.
   const catalog = await q<CatalogItem>(
     `SELECT qbo_id AS id, sku, name, description, unit_price::float AS price, category
      FROM items
-     WHERE ${workerVisibleItemSql()}
+     WHERE ${mechanicVisibleItemSql()}
      ORDER BY name`
   );
 
@@ -52,23 +52,23 @@ export default async function Page({
   //
   // Filtered through the same predicate, not just ranked: a *manager* can add a service line
   // during review (§17) and that line is real usage, so without the join a heavily-serviced
-  // event would surface "Mechanic (per day)" in the worker's popular strip — the one place a
-  // hidden item could still reach a worker's thumb.
+  // event would surface "Mechanic (per day)" in the mechanic's popular strip — the one place a
+  // hidden item could still reach a mechanic's thumb.
   const popular = await q<{ id: string }>(
     `SELECT l.item_qbo_id AS id
      FROM submission_lines l
      JOIN submissions s ON s.id = l.submission_id
      JOIN items i ON i.qbo_id = l.item_qbo_id
-     WHERE s.event_id = $1 AND l.voided_at IS NULL AND ${workerVisibleItemSql('i')}
+     WHERE s.event_id = $1 AND l.voided_at IS NULL AND ${mechanicVisibleItemSql('i')}
      GROUP BY l.item_qbo_id ORDER BY SUM(l.qty) DESC LIMIT 5`,
-    [worker.event_id]
+    [mechanic.event_id]
   );
 
   // Hydrate the usage list so the page renders with real data and survives a reload with
   // no client fetch. Keyed by customer so switching tabs can read from this map first.
   const usageByCustomer: Record<string, UsageLine[]> = {};
   for (const c of customers) {
-    usageByCustomer[c.qbo_id] = await usageForCustomer(worker.event_id, c.qbo_id);
+    usageByCustomer[c.qbo_id] = await usageForCustomer(mechanic.event_id, c.qbo_id);
   }
 
   // A charge batch existing for (event, customer) is exactly what `setUsageQty` rejects as
@@ -76,15 +76,15 @@ export default async function Page({
   // rather than accepting taps that the server will refuse with a 409.
   const batches = await q<{ customer_qbo_id: string }>(
     `SELECT customer_qbo_id FROM charge_batches WHERE event_id = $1`,
-    [worker.event_id]
+    [mechanic.event_id]
   );
   const locked = new Set(batches.map((b) => b.customer_qbo_id));
   const lockedByCustomer: Record<string, boolean> = {};
   for (const c of customers) lockedByCustomer[c.qbo_id] = locked.has(c.qbo_id);
 
   return (
-    <WorkerApp
-      worker={{ id: worker.id, name: worker.name, language: worker.language, eventName: worker.event_name }}
+    <MechanicApp
+      mechanic={{ id: mechanic.id, name: mechanic.name, language: mechanic.language, eventName: mechanic.event_name }}
       customers={customers}
       catalog={catalog}
       popularIds={popular.map((p) => p.id)}

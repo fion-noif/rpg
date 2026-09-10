@@ -64,7 +64,7 @@ const flags = {
   // Estimates, billable Purchases and the rest of Intuit's stock transaction data. Needed
   // because QuickBooks refuses to deactivate a customer that still carries a balance or an
   // unbilled charge, and those rows are where both come from — so without this, 13 of the
-  // 29 stock customers stay in the worker's picker no matter what --deactivate-demo does.
+  // 29 stock customers stay in the mechanic's picker no matter what --deactivate-demo does.
   purgeStockTxns: args.includes('--purge-stock-txns'),
 };
 
@@ -223,7 +223,7 @@ async function seedParts(categoryIds: Map<string, string>): Promise<Counts> {
  * team support, a mechanic and an engine lease, billed in whole days).
  *
  * Filed under the `Race Services` category, which is the *only* thing that makes them
- * manager-only — the app reads `items.category` and hides them from workers (src/catalog.ts).
+ * manager-only — the app reads `items.category` and hides them from mechanics (src/catalog.ts).
  * Nothing about the item itself is special, which is the point: a future service is a
  * QuickBooks entry Mike makes himself, with no app change.
  *
@@ -278,10 +278,10 @@ async function seedServices(categoryIds: Map<string, string>): Promise<Counts> {
  * default sales product and default time-activity service, and QuickBooks refuses. So
  * instead of fighting that, reclassify them: once their category is `Race Services` they are
  * manager-only like the real services, which is a defensible place for them to sit rather
- * than two unpriced rows in a worker's parts list.
+ * than two unpriced rows in a mechanic's parts list.
  *
- * A refusal is reported and tolerated, not thrown. `WORKER_VISIBLE_ITEM_SQL` requires a SKU
- * and neither of these has one, so workers are protected either way; this is tidiness on top
+ * A refusal is reported and tolerated, not thrown. `MECHANIC_VISIBLE_ITEM_SQL` requires a SKU
+ * and neither of these has one, so mechanics are protected either way; this is tidiness on top
  * of the real defence, and it must not be able to fail a seeding run.
  */
 async function reparentStockServices(
@@ -298,7 +298,7 @@ async function reparentStockServices(
     const record = byId.get(target.id);
     // Same (id, name) both-must-match belt as deactivateStock, and for the same reason: if
     // ids ever shifted we would be re-parenting some *other* item, which for a real racing
-    // part would hide it from every worker.
+    // part would hide it from every mechanic.
     if (!record || stripDeletedSuffix(record.Name) !== target.name) {
       console.log(`  ? Item ${target.id} (${target.name}) not found or renamed — skipped`);
       result.skipped += 1;
@@ -324,7 +324,7 @@ async function reparentStockServices(
       const message =
         err instanceof QboError ? (err.fault?.detail ?? err.fault?.message ?? err.message) : String(err);
       console.log(`  ! ${target.name} could not be re-parented: ${message}`);
-      console.log(`    (harmless: it has no SKU, so workers cannot see it either way)`);
+      console.log(`    (harmless: it has no SKU, so mechanics cannot see it either way)`);
       result.refused.push(`${target.name}: ${message}`);
     }
   }

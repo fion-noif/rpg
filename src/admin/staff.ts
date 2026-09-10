@@ -1,6 +1,6 @@
-// Stable person identity for the admin's worker picker (plan §6).
+// Stable person identity for the admin's mechanic picker (plan §6).
 //
-// `staff` is the person; `workers` is one person's participation in one event. The picker
+// `staff` is the person; `mechanics` is one person's participation in one event. The picker
 // shows staff so the manager can re-add the same people weekend after weekend without
 // retyping names, and so `staff.language` acts as a sticky per-person default.
 //
@@ -23,7 +23,7 @@ export interface StaffSummary {
 
 /**
  * Everyone the manager can pick from, alphabetically. The synthetic per-event manager
- * worker has its own staff row (see db/schema.sql `is_admin`); those are filtered out
+ * mechanic has its own staff row (see db/schema.sql `is_admin`); those are filtered out
  * because "Manager" is not a person you assign to a customer.
  */
 export async function listStaff(): Promise<StaffSummary[]> {
@@ -35,16 +35,16 @@ export async function listStaff(): Promise<StaffSummary[]> {
      FROM staff s
      LEFT JOIN LATERAL (
        SELECT count(*)::int AS event_count
-       FROM workers w WHERE w.staff_id = s.id AND NOT w.is_admin
+       FROM mechanics w WHERE w.staff_id = s.id AND NOT w.is_admin
      ) cnt ON TRUE
      LEFT JOIN LATERAL (
        SELECT e.code, e.created_at
-       FROM workers w JOIN events e ON e.id = w.event_id
+       FROM mechanics w JOIN events e ON e.id = w.event_id
        WHERE w.staff_id = s.id AND NOT w.is_admin
        ORDER BY e.created_at DESC, e.id DESC
        LIMIT 1
      ) last ON TRUE
-     WHERE NOT EXISTS (SELECT 1 FROM workers wa WHERE wa.staff_id = s.id AND wa.is_admin)
+     WHERE NOT EXISTS (SELECT 1 FROM mechanics wa WHERE wa.staff_id = s.id AND wa.is_admin)
      ORDER BY s.name, s.id`
   );
 }

@@ -28,7 +28,7 @@ variable "backup_region" {
 
 variable "app_base_url" {
   description = <<-EOT
-    Public base URL minted into worker magic links (APP_BASE_URL). Deliberately empty on the
+    Public base URL minted into mechanic magic links (APP_BASE_URL). Deliberately empty on the
     first apply — App Runner assigns its domain only once the service exists — so the deploy
     is two-step: apply, read the service_url output, set this, apply again. A wrong value
     does not break the app; it breaks every link the admin prints, silently.
@@ -48,7 +48,7 @@ variable "qbo_environment" {
 }
 
 variable "event_time_zone" {
-  description = "The track's zone: worker links expire at end-of-day-after-event *in this zone* (src/workers.ts)."
+  description = "The track's zone: mechanic links expire at end-of-day-after-event *in this zone* (src/mechanics.ts)."
   type        = string
   default     = "America/Los_Angeles"
 }

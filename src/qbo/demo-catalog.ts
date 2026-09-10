@@ -292,7 +292,7 @@ export const STOCK_CUSTOMERS: { id: string; name: string }[] = [
   { id: '6', name: 'Dylan Sollfrank' },
   { id: '7', name: 'Freeman Sporting Goods' },
   // Sub-customer address rows on Freeman Sporting Goods. These are the two rows that
-  // pollute the worker customer picker, so they are deactivated like the rest.
+  // pollute the mechanic customer picker, so they are deactivated like the rest.
   { id: '8', name: '0969 Ocean View Road' },
   { id: '9', name: '55 Twin Lane' },
   { id: '10', name: 'Geeta Kalapatapu' },
@@ -322,12 +322,12 @@ export const STOCK_CUSTOMERS: { id: string; name: string }[] = [
  * company's default sales product and `Hours` its default time-activity service, so a
  * sparse `Active: false` on either comes back as a fault however many times it is retried.
  * They therefore stay in the mirror forever, and before this change they leaked onto every
- * worker's phone as two unpriced, SKU-less taps next to the real parts.
+ * mechanic's phone as two unpriced, SKU-less taps next to the real parts.
  *
  * The seeder re-parents them under `Race Services` instead, which reclassifies them as
  * manager-only rather than deleting them — the same "flag, never silently recreate or
  * destroy" posture as §23 Rule 3. If QuickBooks refuses that too, `sku IS NOT NULL` in
- * `WORKER_VISIBLE_ITEM_SQL` still hides them; see the comment there.
+ * `MECHANIC_VISIBLE_ITEM_SQL` still hides them; see the comment there.
  */
 export const STOCK_SERVICE_ITEMS: { id: string; name: string }[] = [
   { id: '1', name: 'Services' },

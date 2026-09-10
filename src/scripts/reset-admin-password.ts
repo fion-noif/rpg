@@ -6,7 +6,7 @@
 //   npm run reset-admin-password -- mrolison
 //
 // No auth check, on the same terms as every other script here (`npm run rotate` hands out a
-// live worker credential the same way): a shell on the box and the DATABASE_URL is the
+// live mechanic credential the same way): a shell on the box and the DATABASE_URL is the
 // authorisation. The new password is generated, never taken as an argument — argv is visible
 // in shell history and to `ps`.
 import { pool } from '../db';

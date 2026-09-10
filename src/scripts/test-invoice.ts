@@ -2,7 +2,7 @@
 // code paths — `approveBatch` then `postBatch` — rather than a parallel copy of the
 // idempotency logic (it used to be that copy; see plan §4).
 //
-// It seeds its own TEST event, worker, participation and one recorded part, so it works on a
+// It seeds its own TEST event, mechanic, participation and one recorded part, so it works on a
 // fresh database, and it is idempotent on re-run: the second run finds the batch already
 // approved and the post adopts the existing sandbox invoice instead of creating another. That
 // re-run *is* the §23 Rule 5 assertion.
@@ -11,7 +11,7 @@
 import { q, pool } from '../db';
 import { approveBatch, batchFor, postBatch } from '../charges';
 import { setUsageQty } from '../usage';
-import { hashToken, newToken } from '../workers';
+import { hashToken, newToken } from '../mechanics';
 
 const EVENT_CODE = 'TEST';
 const QTY = 2;
@@ -52,7 +52,7 @@ console.log(`Acting as: ${owner.name}`);
 const [event] = await q<{ id: number }>(
   // Dates are today's: this fixture event exists only to carry a QBO connectivity probe, but
   // it still has to satisfy the NOT NULL dates, and re-running the probe should not leave
-  // behind an event whose worker links are already expired.
+  // behind an event whose mechanic links are already expired.
   `INSERT INTO events (code, name, start_date, end_date)
    VALUES ($1, 'Connectivity test event', CURRENT_DATE, CURRENT_DATE)
    ON CONFLICT (code) DO UPDATE SET name = events.name
@@ -69,21 +69,21 @@ const staffId =
   staff?.id ?? (await q<{ id: number }>(`SELECT id FROM staff WHERE name = 'Connectivity Test'`))[0].id;
 
 await q(
-  `INSERT INTO workers (event_id, staff_id, name, language, token_hash)
+  `INSERT INTO mechanics (event_id, staff_id, name, language, token_hash)
    VALUES ($1, $2, 'Connectivity Test', 'en', $3)
    ON CONFLICT (event_id, staff_id) DO NOTHING`,
   [event.id, staffId, hashToken(newToken())]
 );
-const [worker] = await q<{ id: number }>(
-  'SELECT id FROM workers WHERE event_id = $1 AND staff_id = $2',
+const [mechanic] = await q<{ id: number }>(
+  'SELECT id FROM mechanics WHERE event_id = $1 AND staff_id = $2',
   [event.id, staffId]
 );
 await q('INSERT INTO event_customers (event_id, customer_qbo_id) VALUES ($1, $2) ON CONFLICT DO NOTHING', [
   event.id,
   customer.qbo_id,
 ]);
-await q('INSERT INTO assignments (worker_id, customer_qbo_id) VALUES ($1, $2) ON CONFLICT DO NOTHING', [
-  worker.id,
+await q('INSERT INTO assignments (mechanic_id, customer_qbo_id) VALUES ($1, $2) ON CONFLICT DO NOTHING', [
+  mechanic.id,
   customer.qbo_id,
 ]);
 
@@ -92,7 +92,7 @@ console.log(`Item:     ${item.name} @ $${Number(item.unit_price)} × ${QTY}`);
 
 // --- Phase 1: approve ---------------------------------------------------------------------
 const write = await setUsageQty({
-  workerId: worker.id,
+  mechanicId: mechanic.id,
   eventId: event.id,
   customerId: customer.qbo_id,
   itemId: item.qbo_id,

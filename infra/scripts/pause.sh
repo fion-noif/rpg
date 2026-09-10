@@ -22,5 +22,5 @@ fi
 
 echo "Pausing ${ARN}…"
 aws apprunner pause-service --service-arn "$ARN" --query "Service.Status" --output text
-echo "Paused. Worker links minted for past events are dead anyway — their events have ended."
+echo "Paused. Mechanic links minted for past events are dead anyway — their events have ended."
 echo "Resume with infra/scripts/resume.sh before the next race weekend."

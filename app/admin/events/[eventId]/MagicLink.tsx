@@ -1,6 +1,6 @@
 'use client';
 
-// One-time display of a worker's magic link. Rendered from a Server Action's return value
+// One-time display of a mechanic's magic link. Rendered from a Server Action's return value
 // (never from a URL, a cookie, or a re-read of the database — only the hash is stored), so
 // this is the single moment the token is visible. Reloading the page loses it; rotate to get
 // a new one.
@@ -11,7 +11,7 @@ const MESSAGES: Record<string, string> = {
   'unknown-event': 'That event no longer exists.',
   'event-closed': 'This event is closed — links cannot be created or rotated.',
   'unknown-staff': 'That person no longer exists. Reload the page.',
-  'unknown-worker': 'That worker is no longer on this event. Reload the page.',
+  'unknown-mechanic': 'That mechanic is no longer on this event. Reload the page.',
   'invalid-name': 'Pick someone from the list, or type a name.',
   // Both reachable through the customers-tab assign panel, which can fail on the customer
   // as well as on the person.
@@ -64,7 +64,7 @@ export function MagicLink({ state }: { state: LinkState }) {
       <input className="admin-input mono" readOnly value={state.link} onFocus={(e) => e.currentTarget.select()} />
       <div className="admin-note">
         Or send the link by text or WhatsApp. It is personal — do not share it between
-        workers. It stops working when this event is closed.
+        mechanics. It stops working when this event is closed.
       </div>
     </div>
   );

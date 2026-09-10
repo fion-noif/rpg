@@ -5,7 +5,7 @@
 //   docker compose exec db psql -U racing -c "CREATE DATABASE racing_test"
 import { readFileSync } from 'node:fs';
 import type pg from 'pg';
-import { hashToken } from './workers';
+import { hashToken } from './mechanics';
 import { createAdmin, type AdminRole } from './admin/admins';
 import { MANAGER_ONLY_CATEGORIES } from './catalog';
 
@@ -19,7 +19,7 @@ export async function applySchema(pool: pg.Pool): Promise<void> {
  */
 export async function resetSchema(pool: pg.Pool): Promise<void> {
   await pool.query(
-    `TRUNCATE submissions, assignments, workers, staff, admins, events, event_customers,
+    `TRUNCATE submissions, assignments, mechanics, staff, admins, events, event_customers,
               charge_batch_lines, admin_actions, customers, items RESTART IDENTITY CASCADE`
   );
 }
@@ -56,8 +56,8 @@ export async function seedAdmin(
 
 export interface Fixtures {
   eventId: number;
-  workerAId: number;
-  workerBId: number;
+  mechanicAId: number;
+  mechanicBId: number;
   staffAId: number;
   staffBId: number;
   customerId: string;
@@ -65,27 +65,27 @@ export interface Fixtures {
   inactiveItemId: string;
   /**
    * An active, sellable item filed under a manager-only QuickBooks category — a service.
-   * Workers must not be able to see or record it; managers must be able to add it (§17).
+   * Mechanics must not be able to see or record it; managers must be able to add it (§17).
    */
   serviceItemId: string;
   /**
    * Intuit's undeletable stock `Services` item, reproduced faithfully: active, sellable,
-   * **no SKU and no category**. The row that leaked onto workers' phones, and the reason
-   * `workerVisibleItemSql` requires a SKU rather than trusting the category alone.
+   * **no SKU and no category**. The row that leaked onto mechanics' phones, and the reason
+   * `mechanicVisibleItemSql` requires a SKU rather than trusting the category alone.
    */
   uncategorizedServiceItemId: string;
 }
 
 /**
- * One event with one participating customer, two workers (each with a staff identity) both
+ * One event with one participating customer, two mechanics (each with a staff identity) both
  * assigned to that customer, one active part, one inactive part, one manager-only service,
  * and one SKU-less uncategorized stock service.
  */
 export async function seedFixtures(pool: pg.Pool): Promise<Fixtures> {
   const {
     rows: [event],
-    // Dates are CURRENT_DATE, not fixed literals, because worker link expiry is derived from
-    // `end_date` (src/workers.ts): a hard-coded date would quietly expire every fixture token
+    // Dates are CURRENT_DATE, not fixed literals, because mechanic link expiry is derived from
+    // `end_date` (src/mechanics.ts): a hard-coded date would quietly expire every fixture token
     // the day it passed, and dozens of tests here resolve one. `T1` is kept as the code even
     // though the app now generates codes — the fixture is asserting on a known code, and
     // going through `createEvent` would make it unpredictable.
@@ -139,32 +139,32 @@ export async function seedFixtures(pool: pg.Pool): Promise<Fixtures> {
   ]);
 
   const { rows: staff } = await pool.query<{ id: number }>(
-    `INSERT INTO staff (name) VALUES ('Worker A'), ('Worker B') RETURNING id`
+    `INSERT INTO staff (name) VALUES ('Mechanic A'), ('Mechanic B') RETURNING id`
   );
   const [staffA, staffB] = staff;
 
   const {
-    rows: [workerA],
+    rows: [mechanicA],
   } = await pool.query<{ id: number }>(
-    `INSERT INTO workers (event_id, staff_id, name, token_hash) VALUES ($1, $2, 'Worker A', $3) RETURNING id`,
+    `INSERT INTO mechanics (event_id, staff_id, name, token_hash) VALUES ($1, $2, 'Mechanic A', $3) RETURNING id`,
     [event.id, staffA.id, hashToken('token-a')]
   );
   const {
-    rows: [workerB],
+    rows: [mechanicB],
   } = await pool.query<{ id: number }>(
-    `INSERT INTO workers (event_id, staff_id, name, token_hash) VALUES ($1, $2, 'Worker B', $3) RETURNING id`,
+    `INSERT INTO mechanics (event_id, staff_id, name, token_hash) VALUES ($1, $2, 'Mechanic B', $3) RETURNING id`,
     [event.id, staffB.id, hashToken('token-b')]
   );
-  await pool.query(`INSERT INTO assignments (worker_id, customer_qbo_id) VALUES ($1, $3), ($2, $3)`, [
-    workerA.id,
-    workerB.id,
+  await pool.query(`INSERT INTO assignments (mechanic_id, customer_qbo_id) VALUES ($1, $3), ($2, $3)`, [
+    mechanicA.id,
+    mechanicB.id,
     customerId,
   ]);
 
   return {
     eventId: event.id,
-    workerAId: workerA.id,
-    workerBId: workerB.id,
+    mechanicAId: mechanicA.id,
+    mechanicBId: mechanicB.id,
     staffAId: staffA.id,
     staffBId: staffB.id,
     customerId,

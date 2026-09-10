@@ -21,20 +21,20 @@ export async function GET(req: NextRequest) {
   // which is the honest answer for a line the shared password recorded. Columns are unchanged
   // — downstream sheets depend on this header.
   const rows = await q(
-    `SELECT e.code AS event, c.display_name AS customer, w.name AS worker,
+    `SELECT e.code AS event, c.display_name AS customer, w.name AS mechanic,
             l.sku, l.item_name, l.qty, l.unit_price, s.status, s.submitted_at, s.id AS submission_id
      FROM submission_lines l
      JOIN submissions s ON s.id = l.submission_id
      JOIN events e ON e.id = s.event_id
-     JOIN workers w ON w.id = s.worker_id
+     JOIN mechanics w ON w.id = s.mechanic_id
      JOIN customers c ON c.qbo_id = s.customer_qbo_id
      WHERE l.voided_at IS NULL
      ORDER BY e.code, c.display_name, s.submitted_at`
   );
 
-  const header = 'event,customer,worker,sku,item_name,qty,unit_price,status,submitted_at,submission_id';
+  const header = 'event,customer,mechanic,sku,item_name,qty,unit_price,status,submitted_at,submission_id';
   const body = rows.map((r: any) =>
-    [r.event, r.customer, r.worker, r.sku, r.item_name, r.qty, r.unit_price, r.status, r.submitted_at?.toISOString?.() ?? r.submitted_at, r.submission_id]
+    [r.event, r.customer, r.mechanic, r.sku, r.item_name, r.qty, r.unit_price, r.status, r.submitted_at?.toISOString?.() ?? r.submitted_at, r.submission_id]
       .map(csvCell)
       .join(',')
   );

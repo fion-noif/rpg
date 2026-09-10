@@ -1,4 +1,4 @@
-// Seed a complete, believable race weekend into the app database: one event, eight workers
+// Seed a complete, believable race weekend into the app database: one event, eight mechanics
 // with live magic links, ten participating customers, pre-recorded usage on every one of
 // them, a voided line, one customer approved and POSTED to QuickBooks, and one left in
 // POST_FAILED.
@@ -7,7 +7,7 @@
 //   npm run seed-demo             # create, or adopt what already exists
 //   npm run seed-demo -- --reset  # scrub this event's rows first, then recreate
 //
-// Everything goes through the real functions — `addWorkerToEvent`, `setUsageQty`,
+// Everything goes through the real functions — `addMechanicToEvent`, `setUsageQty`,
 // `approveBatch`, `postBatch` — rather than raw INSERTs. That is the whole point: a magic
 // link is only genuinely valid if it was minted by the code that mints magic links, and a
 // POSTED batch only renders correctly if it went through the state machine that posts. A
@@ -17,7 +17,7 @@
 // against the synced mirror.
 import { pool, q } from '../db';
 import type { AdminActor } from '../admin/admins';
-import { addCustomer, addWorkerToEvent, assign, createEvent } from '../admin/events';
+import { addCustomer, addMechanicToEvent, assign, createEvent } from '../admin/events';
 import { setUsageQty } from '../usage';
 import { approveBatch, batchFor, postBatch } from '../charges';
 import { query as qboQuery, QboError } from '../qbo/client';
@@ -44,8 +44,8 @@ function daysFromToday(offset: number): string {
  */
 const EVENT = {
   name: '2026 USPKS NCMP',
-  // Relative to today, not fixed literals. Worker link expiry is derived from `end_date`
-  // (src/workers.ts), so a hard-coded weekend would make every login link this script prints
+  // Relative to today, not fixed literals. Mechanic link expiry is derived from `end_date`
+  // (src/mechanics.ts), so a hard-coded weekend would make every login link this script prints
   // dead on arrival the moment that weekend passed — which is exactly when someone reaches
   // for a demo. A Friday-to-Sunday shape is preserved by ending today and starting two days
   // back.
@@ -61,7 +61,7 @@ const EVENT = {
 const MIKE: AdminActor = { id: 1, name: 'Mike Rolison' };
 
 /** A realistic bilingual crew (design doc §8): most people cover one customer, two cover two. */
-const WORKERS: { name: string; language: 'en' | 'es'; customers: string[] }[] = [
+const MECHANICS: { name: string; language: 'en' | 'es'; customers: string[] }[] = [
   { name: 'Braddy Egger', language: 'en', customers: ['Guss Lawrence'] },
   { name: 'Sebastian', language: 'es', customers: ['Guss Lawrence', 'Mario Barrios'] },
   { name: 'Mattos', language: 'en', customers: ['Mingnan Liu'] },
@@ -73,7 +73,7 @@ const WORKERS: { name: string; language: 'en' | 'es'; customers: string[] }[] = 
 ];
 
 /**
- * Customers on the entry list. The last two carry no worker assignment on purpose: §21 makes
+ * Customers on the entry list. The last two carry no mechanic assignment on purpose: §21 makes
  * weekend participation a separate step from assignment, and the admin screens have to render
  * a customer nobody is covering yet.
  */
@@ -91,35 +91,35 @@ const PARTICIPANTS = [
 ];
 
 /**
- * Pre-recorded usage, `[sku, qty]` per (worker, customer) tab. Guss Lawrence and
- * Mingnan Liu each get parts from *two* workers, so the review page's merged running list —
+ * Pre-recorded usage, `[sku, qty]` per (mechanic, customer) tab. Guss Lawrence and
+ * Mingnan Liu each get parts from *two* mechanics, so the review page's merged running list —
  * and the "who entered this" column — have something real to show.
  */
-const USAGE: { worker: string; customer: string; parts: [string, number][] }[] = [
-  { worker: 'Braddy Egger', customer: 'Guss Lawrence', parts: [['TIRE-SET-MG', 2], ['AX50-M', 1], ['SPR-80T', 2], ['CH219-L', 3], ['BRK-PAD-F', 2], ['OTH-FUEL-JUG', 1]] },
-  { worker: 'Sebastian', customer: 'Guss Lawrence', parts: [['ENG-SPARK', 4], ['CH-LUBE', 2], ['HW-BOLT-M8', 1]] },
-  { worker: 'Sebastian', customer: 'Mario Barrios', parts: [['MG-YEL', 4], ['SPR-76T', 1], ['BRK-FLUID', 2], ['OTH-LABOR', 3]] },
-  { worker: 'Mattos', customer: 'Mingnan Liu', parts: [['BOD-KIT-CIK', 1], ['BOD-SEAT', 1], ['HW-STEER-WHL', 1]] },
-  { worker: 'Luigi', customer: 'Mingnan Liu', parts: [['CH-LINK-219', 4], ['SPR-11T', 2]] },
-  { worker: 'Luigi', customer: 'Grayson Walcott', parts: [['ENG-PIST-IAME', 1], ['ENG-GASKET', 2], ['ENG-SPARK', 2], ['OTH-COOL', 1]] },
-  { worker: 'Patro', customer: 'Donovan Bonilla', parts: [['TIRE-SET-VEGA', 1], ['AX50-H', 1], ['SPR-84T', 2], ['CH219-S', 1], ['BRK-PAD-R', 1], ['ENG-EXH', 1]] },
-  { worker: 'Kevin', customer: 'Ibáñez Racing Team', parts: [['MG-WT', 4], ['BRK-DISC-R', 1], ['OTH-TIRE-GAUGE', 1]] },
-  { worker: 'Patrick', customer: 'Jake Drew', parts: [['ENG-CLUTCH', 1], ['ENG-CARB-KIT', 1], ['HW-TIEROD', 2]] },
-  { worker: 'Leo', customer: 'Fion Shi', parts: [['OTH-STAND', 1], ['HW-ZIP', 2], ['HW-WASH', 1], ['ENG-SPARK', 1]] },
+const USAGE: { mechanic: string; customer: string; parts: [string, number][] }[] = [
+  { mechanic: 'Braddy Egger', customer: 'Guss Lawrence', parts: [['TIRE-SET-MG', 2], ['AX50-M', 1], ['SPR-80T', 2], ['CH219-L', 3], ['BRK-PAD-F', 2], ['OTH-FUEL-JUG', 1]] },
+  { mechanic: 'Sebastian', customer: 'Guss Lawrence', parts: [['ENG-SPARK', 4], ['CH-LUBE', 2], ['HW-BOLT-M8', 1]] },
+  { mechanic: 'Sebastian', customer: 'Mario Barrios', parts: [['MG-YEL', 4], ['SPR-76T', 1], ['BRK-FLUID', 2], ['OTH-LABOR', 3]] },
+  { mechanic: 'Mattos', customer: 'Mingnan Liu', parts: [['BOD-KIT-CIK', 1], ['BOD-SEAT', 1], ['HW-STEER-WHL', 1]] },
+  { mechanic: 'Luigi', customer: 'Mingnan Liu', parts: [['CH-LINK-219', 4], ['SPR-11T', 2]] },
+  { mechanic: 'Luigi', customer: 'Grayson Walcott', parts: [['ENG-PIST-IAME', 1], ['ENG-GASKET', 2], ['ENG-SPARK', 2], ['OTH-COOL', 1]] },
+  { mechanic: 'Patro', customer: 'Donovan Bonilla', parts: [['TIRE-SET-VEGA', 1], ['AX50-H', 1], ['SPR-84T', 2], ['CH219-S', 1], ['BRK-PAD-R', 1], ['ENG-EXH', 1]] },
+  { mechanic: 'Kevin', customer: 'Ibáñez Racing Team', parts: [['MG-WT', 4], ['BRK-DISC-R', 1], ['OTH-TIRE-GAUGE', 1]] },
+  { mechanic: 'Patrick', customer: 'Jake Drew', parts: [['ENG-CLUTCH', 1], ['ENG-CARB-KIT', 1], ['HW-TIEROD', 2]] },
+  { mechanic: 'Leo', customer: 'Fion Shi', parts: [['OTH-STAND', 1], ['HW-ZIP', 2], ['HW-WASH', 1], ['ENG-SPARK', 1]] },
 ];
 
 /**
- * Corrections: a worker adds a part, then takes it off again. Recorded by writing qty 0,
+ * Corrections: a mechanic adds a part, then takes it off again. Recorded by writing qty 0,
  * which voids rather than deletes (§31), so the audit section of the review page has content
  * and the export can show a struck-through line.
  */
-const VOIDS: { worker: string; customer: string; sku: string }[] = [
-  // The worker has to be the one who *recorded* the line in USAGE above — a void is an edit
-  // to a specific (worker, customer) tab, not to the customer. Getting this wrong does not
-  // fail cleanly: `workerIds.get(...)!` below asserts away the undefined, so a stale name
-  // reaches Postgres as a NULL worker_id and surfaces as a NOT NULL violation.
-  { worker: 'Braddy Egger', customer: 'Guss Lawrence', sku: 'OTH-FUEL-JUG' },
-  { worker: 'Luigi', customer: 'Mingnan Liu', sku: 'SPR-11T' },
+const VOIDS: { mechanic: string; customer: string; sku: string }[] = [
+  // The mechanic has to be the one who *recorded* the line in USAGE above — a void is an edit
+  // to a specific (mechanic, customer) tab, not to the customer. Getting this wrong does not
+  // fail cleanly: `mechanicIds.get(...)!` below asserts away the undefined, so a stale name
+  // reaches Postgres as a NULL mechanic_id and surfaces as a NOT NULL violation.
+  { mechanic: 'Braddy Egger', customer: 'Guss Lawrence', sku: 'OTH-FUEL-JUG' },
+  { mechanic: 'Luigi', customer: 'Mingnan Liu', sku: 'SPR-11T' },
 ];
 
 /** Approved and sent to QuickBooks — the state a tester otherwise has to create themselves. */
@@ -166,23 +166,23 @@ async function resetEvent(): Promise<void> {
     await client.query('DELETE FROM charge_batches WHERE event_id = $1', [event.id]);
     await client.query('DELETE FROM submissions WHERE event_id = $1', [event.id]);
     await client.query(
-      'DELETE FROM assignments WHERE worker_id IN (SELECT id FROM workers WHERE event_id = $1)',
+      'DELETE FROM assignments WHERE mechanic_id IN (SELECT id FROM mechanics WHERE event_id = $1)',
       [event.id]
     );
     await client.query('DELETE FROM admin_actions WHERE event_id = $1', [event.id]);
     await client.query('DELETE FROM event_customers WHERE event_id = $1', [event.id]);
-    await client.query('DELETE FROM workers WHERE event_id = $1', [event.id]);
+    await client.query('DELETE FROM mechanics WHERE event_id = $1', [event.id]);
     // Staff rows are person identities shared across events, so only the ones this scrub
     // orphaned go — and never one belonging to an admin, which would take Mike's
     // attribution with it.
     const staff = await client.query(
       `DELETE FROM staff s
-       WHERE s.admin_id IS NULL AND NOT EXISTS (SELECT 1 FROM workers w WHERE w.staff_id = s.id)
+       WHERE s.admin_id IS NULL AND NOT EXISTS (SELECT 1 FROM mechanics w WHERE w.staff_id = s.id)
        RETURNING s.id`
     );
     await client.query('DELETE FROM events WHERE id = $1', [event.id]);
     await client.query('COMMIT');
-    console.log(`Reset event ${event.code}: removed its workers, tabs, batches and ${staff.rowCount} orphaned staff row(s).`);
+    console.log(`Reset event ${event.code}: removed its mechanics, tabs, batches and ${staff.rowCount} orphaned staff row(s).`);
   } catch (err) {
     await client.query('ROLLBACK');
     throw err;
@@ -262,37 +262,37 @@ try {
     console.log(`Created event ${eventCode} — ${EVENT.name} (id ${eventId}).`);
   }
 
-  // --- Participation (§21: before any worker or any usage) ----------------
+  // --- Participation (§21: before any mechanic or any usage) ----------------
   for (const name of PARTICIPANTS) {
     const result = await addCustomer(eventId, customerIds.get(name)!, MIKE);
     if (!result.ok) fail(`Could not add customer "${name}": ${result.reason}`);
   }
   console.log(`${PARTICIPANTS.length} customers on the entry list.`);
 
-  // --- Workers and assignments -------------------------------------------
-  const workerIds = new Map<string, number>();
+  // --- Mechanics and assignments -------------------------------------------
+  const mechanicIds = new Map<string, number>();
   const links = new Map<string, string | null>();
-  for (const worker of WORKERS) {
-    const result = await addWorkerToEvent(
-      { eventId, newStaff: { name: worker.name, language: worker.language } },
+  for (const mechanic of MECHANICS) {
+    const result = await addMechanicToEvent(
+      { eventId, newStaff: { name: mechanic.name, language: mechanic.language } },
       MIKE
     );
-    if (!result.ok) fail(`Could not add worker "${worker.name}": ${result.reason}`);
-    workerIds.set(worker.name, result.workerId);
-    links.set(worker.name, result.link);
-    for (const customer of worker.customers) {
-      const assigned = await assign(result.workerId, customerIds.get(customer)!, MIKE);
-      if (!assigned.ok) fail(`Could not assign "${worker.name}" to "${customer}": ${assigned.reason}`);
+    if (!result.ok) fail(`Could not add mechanic "${mechanic.name}": ${result.reason}`);
+    mechanicIds.set(mechanic.name, result.mechanicId);
+    links.set(mechanic.name, result.link);
+    for (const customer of mechanic.customers) {
+      const assigned = await assign(result.mechanicId, customerIds.get(customer)!, MIKE);
+      if (!assigned.ok) fail(`Could not assign "${mechanic.name}" to "${customer}": ${assigned.reason}`);
     }
   }
-  console.log(`${WORKERS.length} workers added and assigned.`);
+  console.log(`${MECHANICS.length} mechanics added and assigned.`);
 
   // --- Usage --------------------------------------------------------------
   let lineCount = 0;
   for (const entry of USAGE) {
     for (const [sku, qty] of entry.parts) {
       const result = await setUsageQty({
-        workerId: workerIds.get(entry.worker)!,
+        mechanicId: mechanicIds.get(entry.mechanic)!,
         eventId,
         customerId: customerIds.get(entry.customer)!,
         itemId: itemIds.get(sku)!,
@@ -304,7 +304,7 @@ try {
   }
   for (const v of VOIDS) {
     const result = await setUsageQty({
-      workerId: workerIds.get(v.worker)!,
+      mechanicId: mechanicIds.get(v.mechanic)!,
       eventId,
       customerId: customerIds.get(v.customer)!,
       itemId: itemIds.get(v.sku)!,
@@ -374,19 +374,19 @@ try {
   console.log('');
   console.log(`Event: ${EVENT.name} (${eventCode}) — ${EVENT.startDate} to ${EVENT.endDate}`);
   console.log('');
-  console.log(`${'Worker'.padEnd(18)}${'Lang'.padEnd(6)}${'Customers'.padEnd(46)}Login link`);
+  console.log(`${'Mechanic'.padEnd(18)}${'Lang'.padEnd(6)}${'Customers'.padEnd(46)}Login link`);
   console.log('-'.repeat(150));
-  for (const worker of WORKERS) {
-    const link = links.get(worker.name);
+  for (const mechanic of MECHANICS) {
+    const link = links.get(mechanic.name);
     console.log(
-      worker.name.padEnd(18) +
-        worker.language.padEnd(6) +
-        worker.customers.join(', ').padEnd(46) +
+      mechanic.name.padEnd(18) +
+        mechanic.language.padEnd(6) +
+        mechanic.customers.join(', ').padEnd(46) +
         (link ?? '(already on the event — rotate from /admin, or re-run with --reset)')
     );
   }
   console.log('');
-  console.log('Links are personal. A worker who loses theirs needs a rotation, not a copy of');
+  console.log('Links are personal. A mechanic who loses theirs needs a rotation, not a copy of');
   console.log("somebody else's. They are minted from APP_BASE_URL — set that to a host the");
   console.log('testers’ phones can actually reach before handing any of these out.');
 } catch (err) {

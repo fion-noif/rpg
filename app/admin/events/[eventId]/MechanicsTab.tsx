@@ -1,30 +1,30 @@
-// The Workers tab: who is on the weekend, what they can see, and their credential.
+// The Mechanics tab: who is on the weekend, what they can see, and their credential.
 //
 // The infrequent surface. Setup happens customer-first on the Customers tab; you come here
 // to rotate a link somebody lost, to check whether a link is still live, or to give one
-// worker several more customers at once — which is what the per-row assign picker below is
+// mechanic several more customers at once — which is what the per-row assign picker below is
 // for, and why it stays even though the Customers tab can also assign.
 //
 // It is also the no-JS floor: that picker is a plain Server Action form, so an admin with
 // JavaScript off can still assign from here.
 //
 // Server component — every control is a form or a small client component of its own.
-import { assignAction, removeWorkerAction, unassignAction } from './actions';
-import { AddWorkerForm } from './AddWorkerForm';
+import { assignAction, removeMechanicAction, unassignAction } from './actions';
+import { AddMechanicForm } from './AddMechanicForm';
 import { RotateLinkButton } from './RotateLinkButton';
-import type { EventCustomer, EventWorker } from '@/src/admin/events';
+import type { EventCustomer, EventMechanic } from '@/src/admin/events';
 import type { StaffOption } from './types';
 
-export function WorkersTab({
+export function MechanicsTab({
   eventId,
   closed,
-  workers,
+  mechanics,
   customers,
   staff,
 }: {
   eventId: number;
   closed: boolean;
-  workers: EventWorker[];
+  mechanics: EventMechanic[];
   customers: EventCustomer[];
   staff: StaffOption[];
 }) {
@@ -33,7 +33,7 @@ export function WorkersTab({
       <table className="admin-table">
         <thead>
           <tr>
-            <th>Worker</th>
+            <th>Mechanic</th>
             <th>Language</th>
             <th>Assigned customers</th>
             <th>Link</th>
@@ -41,7 +41,7 @@ export function WorkersTab({
           </tr>
         </thead>
         <tbody>
-          {workers.map((w) => {
+          {mechanics.map((w) => {
             const unassigned = customers.filter((c) => !w.customers.includes(c.qboId));
             return (
               <tr key={w.id}>
@@ -57,11 +57,11 @@ export function WorkersTab({
                           {!closed && (
                             <form action={unassignAction}>
                               <input type="hidden" name="eventId" value={eventId} />
-                              <input type="hidden" name="workerId" value={w.id} />
+                              <input type="hidden" name="mechanicId" value={w.id} />
                               <input type="hidden" name="customerQboId" value={id} />
                               {/* Every form on this tab carries it, so the redirect comes
                                   back here instead of to Customers. */}
-                              <input type="hidden" name="tab" value="workers" />
+                              <input type="hidden" name="tab" value="mechanics" />
                               <button className="admin-chip-x" type="submit" title="Unassign">
                                 ×
                               </button>
@@ -75,8 +75,8 @@ export function WorkersTab({
                   {!closed && unassigned.length > 0 && (
                     <form className="admin-inline" action={assignAction}>
                       <input type="hidden" name="eventId" value={eventId} />
-                      <input type="hidden" name="workerId" value={w.id} />
-                      <input type="hidden" name="tab" value="workers" />
+                      <input type="hidden" name="mechanicId" value={w.id} />
+                      <input type="hidden" name="tab" value="mechanics" />
                       <select className="admin-input small" name="customerQboId" defaultValue="" required>
                         <option value="" disabled>
                           — assign —
@@ -102,15 +102,15 @@ export function WorkersTab({
                     </span>
                   )}
                   {!closed && (
-                    <RotateLinkButton eventId={eventId} workerId={w.id} workerName={w.name} />
+                    <RotateLinkButton eventId={eventId} mechanicId={w.id} mechanicName={w.name} />
                   )}
                 </td>
                 <td className="num">
                   {!closed && (
-                    <form action={removeWorkerAction}>
+                    <form action={removeMechanicAction}>
                       <input type="hidden" name="eventId" value={eventId} />
-                      <input type="hidden" name="workerId" value={w.id} />
-                      <input type="hidden" name="tab" value="workers" />
+                      <input type="hidden" name="mechanicId" value={w.id} />
+                      <input type="hidden" name="tab" value="mechanics" />
                       <button
                         className="admin-btn small secondary"
                         type="submit"
@@ -129,10 +129,10 @@ export function WorkersTab({
               </tr>
             );
           })}
-          {workers.length === 0 && (
+          {mechanics.length === 0 && (
             <tr>
               <td className="empty-cell" colSpan={5}>
-                No workers on this event yet. Add one while assigning a customer, or below.
+                No mechanics on this event yet. Add one while assigning a customer, or below.
               </td>
             </tr>
           )}
@@ -141,7 +141,7 @@ export function WorkersTab({
 
       {!closed && (
         <div className="admin-card admin-addrow">
-          <AddWorkerForm eventId={eventId} staff={staff} />
+          <AddMechanicForm eventId={eventId} staff={staff} />
         </div>
       )}
     </>
