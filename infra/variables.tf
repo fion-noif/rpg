@@ -70,3 +70,26 @@ variable "github_repo" {
   type        = string
   default     = "fion-noif/rpg"
 }
+
+variable "github_owner_id" {
+  description = <<-EOT
+    Immutable numeric ID of the GitHub *owner*. GitHub now mints OIDC subjects containing
+    these IDs alongside the names — `repo:owner@<owner_id>/name@<repo_id>:ref:…` — so a repo
+    that is deleted and recreated under the same name does not inherit this role's trust.
+    The trust policy accepts both that form and the older name-only form (github-oidc.tf).
+
+    Get it with: gh api repos/<owner>/<name> --jq '.owner.id'
+  EOT
+  type        = number
+  default     = 270454910
+}
+
+variable "github_repository_id" {
+  description = <<-EOT
+    Immutable numeric ID of the GitHub repo itself. See github_owner_id.
+
+    Get it with: gh api repos/<owner>/<name> --jq '.id'
+  EOT
+  type        = number
+  default     = 1344382611
+}

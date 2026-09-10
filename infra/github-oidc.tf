@@ -7,6 +7,11 @@
 # Deploys still happen because App Runner itself watches :latest (apprunner.tf), so the
 # pipeline needs no App Runner permissions either.
 
+locals {
+  github_owner     = split("/", var.github_repo)[0]
+  github_repo_name = split("/", var.github_repo)[1]
+}
+
 resource "aws_iam_openid_connect_provider" "github" {
   url            = "https://token.actions.githubusercontent.com"
   client_id_list = ["sts.amazonaws.com"]
@@ -28,7 +33,22 @@ resource "aws_iam_role" "github_deploy" {
           "token.actions.githubusercontent.com:aud" = "sts.amazonaws.com"
           # main only: a PR branch cannot ship an image, so a deploy always corresponds to a
           # commit that actually landed.
-          "token.actions.githubusercontent.com:sub" = "repo:${var.github_repo}:ref:refs/heads/main"
+          #
+          # Two accepted subjects, not one, because GitHub mints the claim in two shapes and
+          # which one you get is not under this repo's control:
+          #
+          #   repo:owner/name:ref:refs/heads/main                       (name-only, original)
+          #   repo:owner@<owner_id>/name@<repo_id>:ref:refs/heads/main  (immutable IDs)
+          #
+          # A list under StringEquals is OR, and both entries are exact — so accepting both
+          # widens nothing. Matching only one shape means the pipeline breaks with
+          # "Not authorized to perform sts:AssumeRoleWithWebIdentity" the day GitHub flips
+          # the format, and the error names neither the claim nor the reason. Deliberately
+          # not a StringLike wildcard: `repo:fion-noif*` would also trust `fion-noif-evil`.
+          "token.actions.githubusercontent.com:sub" = [
+            "repo:${var.github_repo}:ref:refs/heads/main",
+            "repo:${local.github_owner}@${var.github_owner_id}/${local.github_repo_name}@${var.github_repository_id}:ref:refs/heads/main",
+          ]
         }
       }
     }]
