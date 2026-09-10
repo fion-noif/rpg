@@ -56,9 +56,14 @@ username and password (see *Admin accounts*), then:
 3. **Pick the customers being billed** from the synced QuickBooks customers.
    A customer must participate before anyone can record parts against them.
 4. **Add workers** — reuse a person from a past event or type a new name. Each
-   gets a fresh magic link, **shown once in the UI**; only its SHA-256 hash is
-   stored. Lost it? *Rotate link* issues a new one and kills the old. Assign each
-   worker their customer(s).
+   gets a fresh magic link, **shown once in the UI** as both a **QR code to scan**
+   and a copyable URL; only its SHA-256 hash is stored. Hand the worker your screen
+   and let them scan it — that signs them in on their phone with nothing to type.
+   Lost it? *Rotate link* issues a new one, with a new QR, and kills the old.
+   Assign each worker their customer(s).
+
+   The QR cannot be reprinted later: the plaintext token exists only for that one
+   render, so *Rotate link* is the only way to produce another.
 
    Links stop working at the end of the day after the event's end date. If a
    weekend runs long, push the end date back on the event page — rotating a link
@@ -287,8 +292,11 @@ reconcile exactly.
 
 ## Notes
 
-- Worker auth: admin-generated magic links (`/login/<token>`); only a SHA-256
-  hash of the token is stored. Session cookie lasts 7 days.
+- Worker auth: admin-generated magic links (`/login/<token>`), handed over as a
+  QR code or a copied URL; only a SHA-256 hash of the token is stored. Session
+  cookie lasts 7 days. The QR is rendered server-side and inlined into the admin
+  HTML (`src/qr.ts`) — deliberately not served from an endpoint, because a token
+  must never appear in a URL.
 - Admin auth is two steps: `src/admin-auth.ts` verifies the cookie's signature
   and expiry (pure, unit-tested), then `src/admin-session.ts` loads the account
   and requires `active AND token_version = cookie.tokenVersion`. There is no

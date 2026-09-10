@@ -517,6 +517,43 @@ body {
   margin: 6px 0 0;
 }
 
+/* The QR sits above the URL because scanning is the intended path and copying is the
+   fallback. White plate behind it regardless of the card's tint: scanners want real
+   white quiet-zone, not the linkbox's pale green. */
+.admin-qr {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 4px 0 10px;
+  flex-wrap: wrap;
+}
+
+.admin-qr-code {
+  background: #fff;
+  border-radius: 8px;
+  padding: 6px;
+  line-height: 0;
+  flex: 0 0 auto;
+}
+
+/* The SVG carries its own intrinsic width (src/qr.ts); cap it so a narrow phone-width
+   admin screen cannot push the card wider than the viewport. */
+.admin-qr-code svg {
+  display: block;
+  width: 180px;
+  height: 180px;
+  max-width: 40vw;
+  max-height: 40vw;
+}
+
+.admin-qr-hint {
+  margin: 0;
+  font-size: 13px;
+  color: #166534;
+  flex: 1 1 160px;
+  min-width: 160px;
+}
+
 /* --- END: event setup (m2/event-setup) ------------------------------------- */
 
 /* --- Per-customer review (app/admin/events/[eventId]/customers/[customerId]) --- */

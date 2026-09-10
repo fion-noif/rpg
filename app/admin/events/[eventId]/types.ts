@@ -9,6 +9,13 @@
  */
 export interface LinkState {
   link?: string;
+  /**
+   * The same token as `link`, rendered as an inline SVG QR code, so the worker can scan it
+   * off the manager's screen instead of typing a 100-character URL. Present exactly when
+   * `link` is, and for the same one render — see src/qr.ts for why it is inlined rather
+   * than fetched from an endpoint.
+   */
+  qrSvg?: string;
   name?: string;
   /** True when the person was already on the event, so there is no link to show. */
   existing?: boolean;

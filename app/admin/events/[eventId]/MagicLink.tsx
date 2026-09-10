@@ -38,13 +38,33 @@ export function MagicLink({ state }: { state: LinkState }) {
   return (
     <div className="admin-linkbox">
       <div className="admin-linkbox-title">
-        Link for {state.name} — shown once, copy it now
+        Link for {state.name} — shown once, scan or copy it now
       </div>
+      {state.qrSvg && (
+        <div className="admin-qr">
+          {/*
+            The SVG markup comes from src/qr.ts encoding a URL this server just minted —
+            no user-supplied string reaches it, which is what makes inlining it safe. It is
+            inlined rather than loaded from an endpoint because a token must never enter a
+            URL (see the note at the top of ./actions.ts).
+          */}
+          <div
+            className="admin-qr-code"
+            role="img"
+            aria-label={`QR code containing the sign-in link for ${state.name}`}
+            dangerouslySetInnerHTML={{ __html: state.qrSvg }}
+          />
+          <p className="admin-qr-hint">
+            Hand your screen to {state.name} and have them scan this with their phone camera.
+            It signs them in on that phone.
+          </p>
+        </div>
+      )}
       {/* readOnly input rather than plain text: one click selects the whole thing. */}
       <input className="admin-input mono" readOnly value={state.link} onFocus={(e) => e.currentTarget.select()} />
       <div className="admin-note">
-        Send it by text or WhatsApp. It is personal — do not share it between workers. It stops
-        working when this event is closed.
+        Or send the link by text or WhatsApp. It is personal — do not share it between
+        workers. It stops working when this event is closed.
       </div>
     </div>
   );

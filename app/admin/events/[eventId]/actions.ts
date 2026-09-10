@@ -36,6 +36,7 @@ import {
   updateEventDates,
 } from '@/src/admin/events';
 import type { AssignState, LinkState } from './types';
+import { qrSvg } from '@/src/qr';
 
 async function requireAdminAction(): Promise<AdminSession> {
   return requireAdminPage();
@@ -159,6 +160,16 @@ export async function closeEventAction(form: FormData): Promise<never> {
 // ---------------------------------------------------------------------------
 
 /**
+ * Fills in `qrSvg` for any state that carries a link, so the three mint paths below cannot
+ * disagree about whether a QR was drawn. A state with no link — someone already on the
+ * event, or an error — passes through untouched: there is no credential to encode.
+ */
+async function withQr<T extends LinkState>(state: T): Promise<T> {
+  if (!state.link) return state;
+  return { ...state, qrSvg: await qrSvg(state.link) };
+}
+
+/**
  * The customers-tab workflow: point somebody at this customer, adding them to the event
  * first if they are not on it yet.
  *
@@ -183,11 +194,12 @@ export async function assignWorkerAction(_prev: AssignState, form: FormData): Pr
   const who = str(form, 'who');
   const newName = str(form, 'newName').trim();
 
-  const done = (result: { name: string; link: string | null }): AssignState => ({
-    assignedTo: customerName,
-    name: result.name,
-    link: result.link ?? undefined,
-  });
+  const done = (result: { name: string; link: string | null }): Promise<AssignState> =>
+    withQr({
+      assignedTo: customerName,
+      name: result.name,
+      link: result.link ?? undefined,
+    });
 
   // Same precedence as addWorkerAction: a typed name beats the picker, because filling it in
   // is the more deliberate act.
@@ -198,7 +210,7 @@ export async function assignWorkerAction(_prev: AssignState, form: FormData): Pr
       check.admin
     );
     revalidatePath(`/admin/events/${eventId}`);
-    return result.ok ? done(result) : { error: result.reason };
+    return result.ok ? await done(result) : { error: result.reason };
   }
 
   if (who.startsWith('s:')) {
@@ -208,7 +220,7 @@ export async function assignWorkerAction(_prev: AssignState, form: FormData): Pr
       check.admin
     );
     revalidatePath(`/admin/events/${eventId}`);
-    return result.ok ? done(result) : { error: result.reason };
+    return result.ok ? await done(result) : { error: result.reason };
   }
 
   if (who.startsWith('w:')) {
@@ -255,7 +267,7 @@ export async function addWorkerAction(_prev: LinkState, form: FormData): Promise
   revalidatePath(`/admin/events/${eventId}`);
   if (!result.ok) return { error: result.reason };
   return result.link
-    ? { link: result.link, name: result.name }
+    ? await withQr({ link: result.link, name: result.name })
     : { name: result.name, existing: true };
 }
 
@@ -266,5 +278,5 @@ export async function rotateTokenAction(_prev: LinkState, form: FormData): Promi
   const result = await rotateWorkerToken(num(form, 'workerId'), check.admin);
   revalidatePath(`/admin/events/${num(form, 'eventId')}`);
   if (!result.ok) return { error: result.reason };
-  return { link: result.link, name: str(form, 'workerName') };
+  return withQr({ link: result.link, name: str(form, 'workerName') });
 }
