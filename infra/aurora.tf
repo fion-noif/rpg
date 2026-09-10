@@ -97,9 +97,18 @@ resource "aws_rds_cluster" "main" {
   cluster_identifier = "rpg"
   engine             = "aurora-postgresql"
   engine_mode        = "provisioned" # serverless v2 uses provisioned mode + the scaling block
-  engine_version     = "16.6"        # min-ACU-0 auto-pause needs 16.3+; do not downgrade past it
-  database_name      = "racing"
-  master_username    = "racing"
+  # min-ACU-0 auto-pause needs 16.3+; do not downgrade past it. Beyond that floor the exact
+  # minor is not load-bearing — but it must be one AWS still offers: they retire old Aurora
+  # minors, and a retired one fails at create time with the unhelpful "Cannot find version
+  # X for aurora-postgresql" rather than anything naming deprecation. 16.6 was retired this
+  # way. To see what is currently available before bumping:
+  #   aws rds describe-db-engine-versions --engine aurora-postgresql \
+  #     --query "DBEngineVersions[?starts_with(EngineVersion,'16.')].EngineVersion" --output text
+  # Staying on major 16 deliberately: db/schema.sql and the pg_dump 16+ in docs/deploy.md
+  # both assume it, and a major bump is a migration, not a version edit.
+  engine_version  = "16.14"
+  database_name   = "racing"
+  master_username = "racing"
   # RDS generates and holds the password in Secrets Manager. It never exists in Terraform
   # state or in this repo; DATABASE_URL is assembled from it once, into SSM (docs/deploy.md).
   manage_master_user_password     = true
