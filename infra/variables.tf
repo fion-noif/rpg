@@ -65,6 +65,25 @@ variable "db_ingress_cidrs" {
   default     = ["0.0.0.0/0"]
 }
 
+variable "service_name" {
+  description = <<-EOT
+    App Runner service name. Not "rpg" like every other resource here: App Runner enforces
+    a 4-character minimum (`[A-Za-z0-9][A-Za-z0-9-_]{3,39}`) and rejects a 3-character name
+    at create time. Everything else in this stack — ECR repo, IAM roles, DB cluster — is
+    still plain "rpg"; this is the one place the name has to differ.
+
+    infra/scripts/_env.sh carries the same value as RPG_SERVICE_NAME, because pause.sh and
+    resume.sh find the service by listing App Runner and matching on this name. Change one
+    and you must change the other, or those two scripts report the service as missing.
+  EOT
+  type        = string
+  default     = "rpg-app"
+  validation {
+    condition     = can(regex("^[A-Za-z0-9][A-Za-z0-9-_]{3,39}$", var.service_name))
+    error_message = "service_name must match App Runner's [A-Za-z0-9][A-Za-z0-9-_]{3,39} — 4 to 40 characters."
+  }
+}
+
 variable "github_repo" {
   description = "owner/name of the GitHub repo allowed to push images via OIDC. No stored AWS keys in GitHub."
   type        = string

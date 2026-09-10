@@ -13,3 +13,8 @@
 # elsewhere (the restore drill against a scratch account, a second operator's profile name).
 export AWS_PROFILE="${AWS_PROFILE:-rpg}"
 export AWS_REGION="${AWS_REGION:-us-west-2}" # keep in sync with var.region (infra/variables.tf)
+
+# pause.sh/resume.sh locate the service by name. Not "rpg": App Runner enforces a
+# 4-character minimum, so the service alone carries a longer name than the rest of the
+# stack. Keep in sync with var.service_name (infra/variables.tf).
+export RPG_SERVICE_NAME="${RPG_SERVICE_NAME:-rpg-app}"

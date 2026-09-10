@@ -62,7 +62,7 @@ resource "aws_iam_role_policy" "apprunner_instance_ssm" {
 }
 
 resource "aws_apprunner_service" "app" {
-  service_name = "rpg"
+  service_name = var.service_name
 
   source_configuration {
     authentication_configuration {

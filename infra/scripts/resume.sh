@@ -8,9 +8,10 @@ set -euo pipefail
 # shellcheck source=_env.sh
 . "$(cd "$(dirname "$0")" && pwd)/_env.sh"
 
-ARN=$(aws apprunner list-services --query "ServiceSummaryList[?ServiceName=='rpg'].ServiceArn | [0]" --output text)
+ARN=$(aws apprunner list-services \
+  --query "ServiceSummaryList[?ServiceName=='${RPG_SERVICE_NAME}'].ServiceArn | [0]" --output text)
 if [ -z "$ARN" ] || [ "$ARN" = "None" ]; then
-  echo "No App Runner service named 'rpg' found in this region/account." >&2
+  echo "No App Runner service named '${RPG_SERVICE_NAME}' found in ${AWS_REGION}." >&2
   exit 1
 fi
 

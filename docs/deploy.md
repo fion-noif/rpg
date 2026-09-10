@@ -81,9 +81,19 @@ terraform apply -target=aws_ecr_repository.app \
 #    Wait for the green run — ECR now has :latest.
 
 # 3. Database next, so its endpoint exists.
-terraform apply -target=aws_rds_cluster_instance.main   # ~10 minutes; pulls in the cluster/VPC
+# ~10 minutes. Pulls in the cluster and the whole VPC — including the internet gateway and
+# its route, which the instance depends_on explicitly (aurora.tf) precisely so that -target
+# does not prune them: a publicly accessible instance in a gateway-less VPC is rejected.
+terraform apply -target=aws_rds_cluster_instance.main
 
-# 4. Secrets. Terraform made the parameter names; the values never pass through it.
+# 4. Secrets. Terraform owns the parameter *names*; the values never pass through it.
+#    Create the four placeholder parameters FIRST — `aws ssm put-parameter` would otherwise
+#    create them itself, and the step-5 apply then dies with "ParameterAlreadyExists" on all
+#    four. (Recovery if that happens: import them, one per name, then re-apply —
+#    `terraform import 'aws_ssm_parameter.secret["database-url"]' /rpg/database-url`.
+#    ignore_changes on `value` in ssm.tf means importing cannot clobber a real secret.)
+terraform apply -target=aws_ssm_parameter.secret
+
 PW=$(aws secretsmanager get-secret-value \
       --secret-id "$(terraform output -raw db_master_secret_arn)" \
       --query SecretString --output text | python3 -c 'import json,sys; print(json.load(sys.stdin)["password"])')

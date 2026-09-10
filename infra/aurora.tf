@@ -147,4 +147,13 @@ resource "aws_rds_cluster_instance" "main" {
   engine_version      = aws_rds_cluster.main.engine_version
   instance_class      = "db.serverless"
   publicly_accessible = true
+
+  # RDS refuses to create a publicly accessible instance in a VPC with no internet gateway
+  # ("InvalidVPCNetworkStateFault"), so this genuinely depends on the IGW and its route —
+  # but nothing above *references* them, so without this the dependency is invisible to
+  # Terraform. It still works for a full apply (everything gets created either way) and
+  # breaks only under `-target`, which prunes the graph to the target's dependency closure
+  # and would leave the VPC gateway-less. docs/deploy.md bootstraps this instance with
+  # exactly that flag, so the edge case is the documented path, not a hypothetical.
+  depends_on = [aws_route_table_association.db]
 }
